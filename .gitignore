@@ -1,0 +1,12 @@
+node_modules
+.next
+out
+build
+tsconfig.tsbuildinfo
+npm-debug.log*
+.env
+.env.*
+.DS_Store
+*.zip
+.vercel
+coverage

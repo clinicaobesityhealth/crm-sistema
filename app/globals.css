@@ -1,0 +1,173 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --brand-50:  rgb(240, 247, 255);
+  --brand-100: rgb(224, 239, 254);
+  --brand-200: rgb(186, 224, 253);
+  --brand-300: rgb(124, 200, 251);
+  --brand-400: rgb(54, 170, 246);
+  --brand-500: #0c8ee7;
+  --brand-600: #006fc5;
+  --brand-700: #0058a0;
+  --brand-800: #004b84;
+  --brand-900: #003f6e;
+  --brand-950: #00284a;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: 'Inter', system-ui, sans-serif;
+  background: #f8fafc;
+  color: #0f172a;
+  -webkit-font-smoothing: antialiased;
+}
+
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 2px; }
+::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+
+.bubble-in {
+  background: var(--bubble-in-bg, #ffffff);
+  color: var(--bubble-in-color, #0f172a);
+  border: 1px solid #e2e8f0;
+  border-radius: 0 16px 16px 16px;
+}
+.bubble-out {
+  background: var(--bubble-out-bg, #dcfce7);
+  color: var(--bubble-out-color, #14532d);
+  border: 1px solid #bbf7d0;
+  border-radius: 16px 0 16px 16px;
+}
+.bubble-out-sofia {
+  background: var(--bubble-out-bg, #d1fae5);
+  color: var(--bubble-out-color, #065f46);
+  opacity: 0.92;
+  border: 1px solid #a7f3d0;
+  border-radius: 16px 0 16px 16px;
+}
+.bubble-private {
+  background: var(--bubble-private-bg, #fff7ed);
+  color: var(--bubble-private-color, #7c2d12);
+  border: 1px solid #fed7aa;
+  border-radius: 16px 0 16px 16px;
+}
+
+/* v48.144 — "Orbe de IA": indicador animado de "analisando com IA" (pedido
+   do Jorge, inspirado num vídeo de referência com um núcleo brilhante e
+   anéis orbitando em volta). Só CSS, sem imagem/vídeo e sem áudio. */
+.ai-orb-wrap {
+  position: relative;
+  width: 30px;
+  height: 30px;
+  flex-shrink: 0;
+}
+.ai-orb-core {
+  position: absolute;
+  inset: 7px;
+  border-radius: 9999px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: radial-gradient(circle at 32% 28%, var(--brand-300), var(--brand-600) 75%);
+  animation: ai-orb-glow 1.7s ease-in-out infinite;
+}
+.ai-orb-core svg { color: #fff; }
+.ai-orb-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+  border: 1.5px solid var(--brand-400);
+}
+.ai-orb-ring-1 { animation: ai-orb-spin-a 2.4s linear infinite; }
+.ai-orb-ring-2 { inset: -4px; border-color: var(--brand-600); opacity: 0.55; animation: ai-orb-spin-b 3.1s linear infinite; }
+.ai-orb-ring-3 { inset: 3px; border-color: var(--brand-300); opacity: 0.7; animation: ai-orb-spin-a 1.8s linear infinite reverse; }
+
+@keyframes ai-orb-spin-a {
+  from { transform: rotate(0deg) scaleY(0.4) rotate(35deg); }
+  to   { transform: rotate(360deg) scaleY(0.4) rotate(35deg); }
+}
+@keyframes ai-orb-spin-b {
+  from { transform: rotate(0deg) scaleY(0.5) rotate(-50deg); }
+  to   { transform: rotate(360deg) scaleY(0.5) rotate(-50deg); }
+}
+@keyframes ai-orb-glow {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(12,142,231,0.4); }
+  50%      { box-shadow: 0 0 8px 3px rgba(12,142,231,0.25); }
+}
+
+/* Barrinha de progresso indeterminada, usada junto do orbe */
+.ai-orb-bar-track {
+  position: relative;
+  height: 4px;
+  border-radius: 9999px;
+  background: var(--brand-100);
+  overflow: hidden;
+}
+.ai-orb-bar-fill {
+  position: absolute;
+  top: 0; bottom: 0;
+  width: 35%;
+  border-radius: 9999px;
+  background: linear-gradient(90deg, transparent, var(--brand-500), transparent);
+  animation: ai-orb-bar-slide 1.3s ease-in-out infinite;
+}
+@keyframes ai-orb-bar-slide {
+  0%   { left: -35%; }
+  100% { left: 100%; }
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+.typing-dot:nth-child(1) { animation: pulse-dot 1s ease-in-out infinite; }
+.typing-dot:nth-child(2) { animation: pulse-dot 1s ease-in-out 0.2s infinite; }
+.typing-dot:nth-child(3) { animation: pulse-dot 1s ease-in-out 0.4s infinite; }
+
+.sidebar-item {
+  @apply flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all cursor-pointer;
+}
+.sidebar-item:hover { @apply bg-brand-50 text-brand-700; }
+.sidebar-item.active { @apply bg-brand-100 text-brand-700; }
+.sidebar-item .icon { @apply w-5 h-5 flex-shrink-0; }
+
+/* Safe area para bottom nav mobile */
+.pb-safe {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+.pt-safe-top {
+  padding-top: max(0.625rem, env(safe-area-inset-top, 0px));
+}
+
+/* Trava a rolagem do body no mobile para o header não oscilar */
+@media (max-width: 767px) {
+  html, body {
+    overflow: hidden;
+    position: fixed;
+    width: 100%;
+    height: 100%;
+    overscroll-behavior: none;
+  }
+}
+
+/* Espaço para o bottom nav no mobile */
+@media (max-width: 767px) {
+  .mobile-pb {
+    padding-bottom: 4rem;
+  }
+}
+
+/* Evita o zoom automático do navegador (iOS/Android) ao tocar em qualquer
+   campo de texto no celular. Navegadores mobile dão zoom quando o campo
+   focado tem font-size menor que 16px — forçamos 16px só no mobile, sem
+   alterar o tamanho visual no desktop. */
+@media (max-width: 767px) {
+  input, textarea, select {
+    font-size: 16px !important;
+  }
+}

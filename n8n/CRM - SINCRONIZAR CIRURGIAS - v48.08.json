@@ -1,0 +1,363 @@
+{
+  "name": "CRM - Sincronizar Cirurgias - v48.08",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "sincronizar-cirurgias",
+        "authentication": "headerAuth",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "a1000000-0000-4000-8000-000000000011",
+      "name": "Botao do CRM",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -200,
+        140
+      ],
+      "webhookId": "sincronizar-cirurgias",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": "CRM Sync Token"
+        }
+      },
+      "notes": "Chamado pelo botao 'Atualizar planilha' na tela de Cirurgias. Protegido pela mesma credencial Header Auth; quem chama e o servidor do CRM, nao o navegador."
+    },
+    {
+      "parameters": {},
+      "id": "a1000000-0000-4000-8000-000000000001",
+      "name": "Executar manualmente",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -200,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 15
+            }
+          ]
+        }
+      },
+      "id": "a1000000-0000-4000-8000-000000000006",
+      "name": "A cada 15 minutos",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -200,
+        460
+      ],
+      "notes": "Adota sozinha as linhas novas que o formulário do médico cria na planilha. Rodar de novo não duplica nada: o CRM ignora o que já conhece."
+    },
+    {
+      "parameters": {
+        "url": "https://sheets.googleapis.com/v4/spreadsheets/1kINTISe_irPMB2YOZtoSGdSIgfA0R6IP-EXRBxRzgpg/values:batchGet?ranges=CIRURGIAS!A3:AE1000&ranges=REALIZADAS!A3:AE1000&ranges=CANCELADAS!A3:AE1000&valueRenderOption=FORMATTED_VALUE&dateTimeRenderOption=FORMATTED_STRING",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleSheetsOAuth2Api",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "a1000000-0000-4000-8000-000000000002",
+      "name": "Ler as tres abas",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        20,
+        300
+      ],
+      "notes": "Le CIRURGIAS, REALIZADAS e CANCELADAS numa chamada so, a partir da linha 3 (a 1 e o logo e a 2 sao os titulos). As tres tem a mesma ordem de colunas — conferido."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Monta o pacote para o CRM, juntando as tres abas.\n//\n// Cada linha vai como uma LISTA na ordem das colunas (A, B, C...), e nao como\n// objeto com nome de coluna. E de proposito: os titulos da planilha tem\n// acento, quebra de linha e pelo menos um erro de digitacao (OBESERVACAO).\n// Depender deles seria construir a ponte em cima de algo que muda quando\n// alguem corrige um titulo.\n//\n// A aba de origem viaja junto: e ela que diz ao CRM se a cirurgia foi\n// realizada ou cancelada, caso a situacao escrita na celula nao seja\n// reconhecida.\n\nconst resposta = $input.first().json;\nconst faixas = resposta.valueRanges || [];\n\nconst linhas = [];\nfor (const faixa of faixas) {\n  // range vem como \"CIRURGIAS!A3:AE1000\" — o nome da aba e o que vem antes do !\n  const aba = String(faixa.range || '').split('!')[0].replace(/^'|'$/g, '');\n  const valores = faixa.values || [];\n  valores.forEach((v, i) => {\n    if (String(v[2] || '').trim() === '') return;   // linha em branco no meio\n    linhas.push({ aba, linha: i + 3, valores: v });\n  });\n}\n\nconst porAba = {};\nfor (const l of linhas) porAba[l.aba] = (porAba[l.aba] || 0) + 1;\n\n// A aba CIRURGIAS crua viaja junto: e ela que sera mesclada na volta,\n// celula a celula, preservando o que nao e do CRM.\nconst cirurgias = (faixas.find(f => String(f.range||'').startsWith('CIRURGIAS')) || {}).values || [];\n\nreturn [{ json: { modo: 'completo', total: linhas.length, por_aba: porAba, linhas, planilha_cirurgias: cirurgias } }];\n"
+      },
+      "id": "a1000000-0000-4000-8000-000000000003",
+      "name": "Preparar pacote",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://crm.obesityhealth.com.br/api/cirurgias/sync",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ modo: $json.modo, linhas: $json.linhas }) }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "a1000000-0000-4000-8000-000000000004",
+      "name": "Enviar ao CRM",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        460,
+        300
+      ],
+      "notes": "modo 'completo': o CRM importa o que nao conhece E devolve o que a planilha deve mostrar. A escrita so acontece se ESCREVER_NA_PLANILHA estiver true no no Montar escrita.",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": "CRM Sync Token"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const r = $('Enviar ao CRM').first().json;\nconst m = $('Montar escrita').first().json;\nreturn [{ json: {\n  modo: r.modo,\n  linhas_lidas_na_planilha: r.recebidas,\n  cirurgias_criadas_no_crm: r.criadas,\n  ja_existiam_ignoradas: r.ignoradas,\n  erros: (r.erros || []).length,\n  detalhe_dos_erros: r.erros || [],\n  ESCREVEU_NA_PLANILHA: m.escrever,\n  linhas_a_atualizar: m.vai_atualizar,\n  linhas_a_incluir: m.vai_incluir,\n  previa_das_mudancas: m.previa,\n} }];\n"
+      },
+      "id": "a1000000-0000-4000-8000-000000000005",
+      "name": "Resumo",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1340,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================================\n//  LIGA/DESLIGA DA ESCRITA NA PLANILHA\n//  Deixe false para SIMULAR: o fluxo mostra o que mudaria sem tocar na planilha.\n//  Troque para true depois de conferir a simulacao.\nconst ESCREVER_NA_PLANILHA = false;\n// ============================================================================\n\n// Monta o que sera gravado na aba CIRURGIAS.\n//\n// A regra que importa aqui: o CRM NAO escreve a linha inteira. Ele so escreve\n// as colunas que sao dele; todas as outras sao copiadas da propria planilha,\n// como estao. Sem isso, o carimbo do formulario, a coluna de alertas, o log da\n// agenda e as cartas geradas seriam apagados na primeira sincronizacao.\n\nconst resposta = $('Enviar ao CRM').first().json;\nconst cruas = $('Preparar pacote').first().json.planilha_cirurgias || [];\n\nconst colunasDoCrm = new Set(resposta.colunas_do_crm || []);\nconst totalColunas = resposta.total_colunas || 31;\nconst COL_CRM_ID = 30;   // coluna AE\n\n// Onde cada cirurgia ja esta na planilha, pelo id do CRM e nao pelo numero da\n// linha: linha se move quando alguem insere ou apaga algo no meio.\nconst linhaPorId = {};\ncruas.forEach((v, i) => {\n  const id = String((v[COL_CRM_ID] || '')).trim();\n  if (id) linhaPorId[id] = i + 3;          // a leitura comecou na linha 3\n});\n\nconst atualizacoes = [];\nconst novas = [];\nconst previa = [];\n\nfor (const item of (resposta.linhas || [])) {\n  const linhaExistente = linhaPorId[item.crm_id] || item.linha || null;\n  const atual = linhaExistente ? (cruas[linhaExistente - 3] || []) : [];\n\n  // Linha que ainda nao existe na planilha nao tem nada a preservar: vai\n  // inteira como o CRM mandou, inclusive o carimbo de criacao.\n  if (!linhaExistente) {\n    novas.push(item.valores.slice(0, totalColunas));\n    previa.push({ acao: 'incluir', linha: null, paciente: item.valores[2] });\n    continue;\n  }\n\n  // Linha existente: valor do CRM nas colunas dele, valor da planilha no resto.\n  const final = [];\n  const mudou = [];\n  for (let c = 0; c < totalColunas; c++) {\n    const daPlanilha = atual[c] !== undefined ? atual[c] : '';\n    const doCrm = item.valores[c] !== undefined ? item.valores[c] : '';\n    const valor = colunasDoCrm.has(c) ? doCrm : daPlanilha;\n    final.push(valor);\n    if (colunasDoCrm.has(c) && String(valor) !== String(daPlanilha)) {\n      mudou.push({ coluna: c, de: daPlanilha, para: valor });\n    }\n  }\n\n  if (mudou.length === 0) continue;        // nada mudou nesta linha\n  atualizacoes.push({ range: `CIRURGIAS!A${linhaExistente}:AE${linhaExistente}`, values: [final] });\n  previa.push({ acao: 'atualizar', linha: linhaExistente, paciente: item.valores[2], mudancas: mudou.length, detalhe: mudou });\n}\n\nreturn [{ json: {\n  escrever: ESCREVER_NA_PLANILHA,\n  vai_atualizar: atualizacoes.length,\n  vai_incluir: novas.length,\n  previa,\n  atualizacoes,\n  novas,\n} }];\n"
+      },
+      "id": "a1000000-0000-4000-8000-000000000007",
+      "name": "Montar escrita",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        680,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              },
+              "leftValue": "={{ $json.escrever }}",
+              "rightValue": ""
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "a1000000-0000-4000-8000-000000000008",
+      "name": "Escrever?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        900,
+        300
+      ],
+      "notes": "Falso = simulacao. O no Resumo mostra o que mudaria, e nada e escrito."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://sheets.googleapis.com/v4/spreadsheets/1kINTISe_irPMB2YOZtoSGdSIgfA0R6IP-EXRBxRzgpg/values:batchUpdate",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleSheetsOAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ valueInputOption: 'USER_ENTERED', data: $json.atualizacoes }) }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "a1000000-0000-4000-8000-000000000009",
+      "name": "Gravar alteracoes",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1120,
+        220
+      ],
+      "notes": "USER_ENTERED: a planilha interpreta data e moeda como se alguem tivesse digitado."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://sheets.googleapis.com/v4/spreadsheets/1kINTISe_irPMB2YOZtoSGdSIgfA0R6IP-EXRBxRzgpg/values/CIRURGIAS!A3:AE3:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleSheetsOAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ values: $('Montar escrita').first().json.novas }) }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "a1000000-0000-4000-8000-000000000010",
+      "name": "Incluir novas",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1120,
+        380
+      ],
+      "notes": "Cirurgias que nasceram no CRM e ainda nao existem na planilha."
+    }
+  ],
+  "connections": {
+    "Executar manualmente": {
+      "main": [
+        [
+          {
+            "node": "Ler as tres abas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar pacote": {
+      "main": [
+        [
+          {
+            "node": "Enviar ao CRM",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enviar ao CRM": {
+      "main": [
+        [
+          {
+            "node": "Montar escrita",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "A cada 15 minutos": {
+      "main": [
+        [
+          {
+            "node": "Ler as tres abas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ler as tres abas": {
+      "main": [
+        [
+          {
+            "node": "Preparar pacote",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Montar escrita": {
+      "main": [
+        [
+          {
+            "node": "Escrever?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Escrever?": {
+      "main": [
+        [
+          {
+            "node": "Gravar alteracoes",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Resumo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gravar alteracoes": {
+      "main": [
+        [
+          {
+            "node": "Incluir novas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Incluir novas": {
+      "main": [
+        [
+          {
+            "node": "Resumo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Botao do CRM": {
+      "main": [
+        [
+          {
+            "node": "Ler as tres abas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false,
+  "pinData": {}
+}

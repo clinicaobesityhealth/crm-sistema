@@ -1,0 +1,27 @@
+-- v48.120 — Equipe avulsa na RGO: preencher à mão quem não está cadastrado.
+--
+-- POR QUE
+-- Jorge pediu: no link de pós-operatório (enviar RGO), poder preencher
+-- manualmente um integrante da equipe (cirurgião, auxiliar, instrumentador
+-- ou anestesista) que não está no cadastro — um "avulso" — COM a opção de
+-- incluir ou não no cadastro (cirurgia_equipe) depois.
+--
+-- cirurgia_equipe (20260914_cadastros_cirurgia_v48_01.sql) também alimenta a
+-- tela de Configurações → Equipe (papel timbrado, margens, "disponível para
+-- novos lançamentos"...). Gravar ali um integrante avulso "que não deveria
+-- contar" (ex.: ativo=false só para escondê-lo) faria essa pessoa aparecer
+-- na lista de Configurações mesmo assim, marcada "inativo" — não é isso que
+-- "não incluir no cadastro" quer dizer. Por isso, quando o cirurgião NÃO
+-- marca "incluir no cadastro da equipe", o nome/documento digitado fica só
+-- nesta coluna, um texto solto por cirurgia, sem tocar em cirurgia_equipe.
+-- Quando ele MARCA a opção, o backend (app/api/rgo/[token]/route.ts) insere
+-- (ou reaproveita, se já existir com o mesmo nome) uma linha normal em
+-- cirurgia_equipe e usa o rgo_*_id de sempre — aí sim vira um integrante
+-- reutilizável de verdade.
+--
+-- Uma coluna só, jsonb, chaveada pelo papel (cirurgiao, auxiliar1, auxiliar2,
+-- instrumentador1, instrumentador2, anestesista) — em vez de 12 colunas de
+-- texto (nome+documento x 6 papéis). Cada valor: {"nome": "...", "documento": "..."}.
+-- Papel presente aqui = avulso, sem cirurgia_equipe.id; o rgo_*_id
+-- correspondente fica null enquanto isso (mutuamente exclusivos).
+alter table public.cirurgias add column if not exists rgo_equipe_avulsa jsonb not null default '{}'::jsonb;

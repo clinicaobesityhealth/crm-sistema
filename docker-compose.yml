@@ -1,0 +1,10 @@
+version: '3.8'
+services:
+  crm:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_SUPABASE_URL=https://zfvpebsmpcajmscqexgh.supabase.co
+      - NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpmdnBlYnNtcGNham1zY3FleGdoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIwNDc0ODAsImV4cCI6MjA5NzYyMzQ4MH0.msOF3s2Q2PWlGgC9m-AMsk6x6ZhKGpXl8Y3nApiPZzs
+    restart: unless-stopped

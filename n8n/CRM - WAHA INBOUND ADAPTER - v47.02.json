@@ -1,0 +1,154 @@
+{
+  "name": "CRM - WAHA Inbound Adapter (v47.02)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "waha-inbound",
+        "options": {}
+      },
+      "id": "c1000000-0000-4000-8000-000000000001",
+      "name": "Webhook WAHA Inbound",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [-680, 0],
+      "webhookId": "waha-inbound"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// =====================================================================\n// MODO DE OPERACAO — a unica coisa que muda na virada de amanha.\n//   'observacao' = traduz e registra, mas NAO entrega ao CRM (risco zero)\n//   'producao'   = entrega de verdade no fluxo do CRM\n// =====================================================================\nconst MODO = 'observacao';\n\nconst WAHA_PUBLICO = 'https://n8n-waha.5k3mqv.easypanel.host';\n\nconst body = $input.first().json.body ?? $input.first().json;\nconst event = body.event;\nconst p = body.payload || {};\nconst info = p._data?.Info || {};\n\nfunction parar(motivo, extra) {\n  return [{ json: { modo: MODO, entregar: false, motivo, event, ...(extra || {}) } }];\n}\n\n// Acks e status ja sao tratados pelo fluxo \"CRM - WAHA Ack Status\".\nif (event === 'message.ack' || event === 'session.status') {\n  return parar('tratado_por_outro_fluxo');\n}\n\n// Reacoes, edicoes e apagadas: por enquanto seguem pela Evolution.\nif (event !== 'message' && event !== 'message.any') {\n  return parar('evento_nao_tratado');\n}\n\n// 'message.any' inclui o que o proprio CRM enviou (source='api'), que ja foi\n// gravado no envio. So interessa aqui a mensagem escrita direto do celular da\n// clinica — o mesmo caso que hoje a Evolution registra como 'phone_direct_synced'.\nif (event === 'message.any' && !(p.fromMe === true && p.source !== 'api')) {\n  return parar('duplicado_ou_enviado_pelo_crm');\n}\nif (event === 'message' && p.fromMe === true) {\n  return parar('duplicado_message_any');\n}\n\n// ---------------------------------------------------------------------\n// Telefone do paciente.\n// ATENCAO: o campo 'from' do WAHA pode vir como LID anonimo\n// (ex.: 253519185576031@lid). O telefone real fica em _data.Info.SenderAlt.\n// Usar 'from' aqui quebraria a identificacao de todo paciente.\n// ---------------------------------------------------------------------\nconst chatJid = info.Chat || p.from || null;\nconst altJid = info.SenderAlt || info.RecipientAlt || null;\nconst ehLid = String(chatJid || '').includes('@lid');\nconst jidTelefone = altJid || (ehLid ? null : chatJid);\n\n// Hash estavel da mensagem (mesmo formato que a Evolution grava em external_id)\nconst idBruto = String(p.id || '');\nconst hash = info.ID || idBruto.split('_').pop();\n\nif (!hash) return parar('sem_id_de_mensagem');\n\n// Estrutura da mensagem: o WAHA ja entrega o mesmo formato interno que a\n// Evolution usa (conversation / extendedTextMessage / imageMessage / ...).\nconst mensagem = p._data?.Message ? JSON.parse(JSON.stringify(p._data.Message)) : {};\nif (!mensagem.conversation && !mensagem.extendedTextMessage && p.body && !p.hasMedia) {\n  mensagem.conversation = p.body;\n}\n\n// Midia: o WAHA manda um LINK apontando para dentro do proprio container\n// (http://localhost:3000/...). Reescrevemos para o endereco publico; o download\n// e a conversao para base64 acontecem no proximo no.\nlet midiaUrl = null;\nif (p.hasMedia && p.media?.url) {\n  midiaUrl = String(p.media.url)\n    .replace(/^https?:\\/\\/localhost:3000/i, WAHA_PUBLICO)\n    .replace(/^https?:\\/\\/127\\.0\\.0\\.1:3000/i, WAHA_PUBLICO);\n}\n\n// Payload no formato que o CRM ja sabe ler (mesmo desenho da Evolution).\nconst payloadCrm = {\n  event: 'messages.upsert',\n  instance: 'crmobesity',\n  data: {\n    key: {\n      id: hash,\n      remoteJid: jidTelefone || chatJid,\n      remoteJidAlt: jidTelefone,\n      participantAlt: jidTelefone,\n      fromMe: p.fromMe === true,\n      addressingMode: ehLid ? 'lid' : ''\n    },\n    pushName: info.PushName || p.notifyName || null,\n    messageTimestamp: p.timestamp || Math.floor(Date.now() / 1000),\n    message: mensagem\n  }\n};\n\nreturn [{\n  json: {\n    modo: MODO,\n    entregar: MODO === 'producao',\n    motivo: 'ok',\n    event,\n    telefone_resolvido: !!jidTelefone,\n    telefone: jidTelefone,\n    era_lid: ehLid,\n    hash,\n    tem_midia: !!midiaUrl,\n    midia_url: midiaUrl,\n    midia_mimetype: p.media?.mimetype || null,\n    midia_filename: p.media?.filename || null,\n    texto: String(p.body || '').slice(0, 120),\n    payload_crm: payloadCrm\n  }\n}];"
+      },
+      "id": "c1000000-0000-4000-8000-000000000002",
+      "name": "Traduzir WAHA para formato CRM",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-460, 0]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose", "version": 3 },
+          "conditions": [
+            {
+              "id": "d1000000-0000-4000-8000-000000000001",
+              "leftValue": "={{ $json.motivo }}",
+              "rightValue": "ok",
+              "operator": { "type": "string", "operation": "equals" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": "=false",
+        "options": {}
+      },
+      "id": "c1000000-0000-4000-8000-000000000003",
+      "name": "Mensagem Util?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [-240, 0]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// Baixa a midia do WAHA e converte para base64, que e o formato que o CRM\n// espera hoje (a Evolution entrega assim). Sem esta etapa, foto de exame, PDF\n// e audio chegariam vazios.\nconst item = $input.first().json;\n\nif (!item.tem_midia || !item.midia_url) {\n  return [{ json: { ...item, midia_ok: null } }];\n}\n\nconst CHAVE_WAHA = 'COLE_AQUI_A_CHAVE_DO_WAHA';\n\ntry {\n  const resp = await fetch(item.midia_url, { headers: { 'X-Api-Key': CHAVE_WAHA } });\n  if (!resp.ok) {\n    return [{ json: { ...item, midia_ok: false, midia_erro: `HTTP ${resp.status}` } }];\n  }\n  const buf = await resp.arrayBuffer();\n  const bytes = new Uint8Array(buf);\n  let bin = '';\n  const CH = 8192;\n  for (let i = 0; i < bytes.length; i += CH) {\n    bin += String.fromCharCode.apply(null, bytes.subarray(i, i + CH));\n  }\n  const base64 = btoa(bin);\n\n  // Injeta no mesmo lugar de onde o CRM ja le hoje.\n  const payload = item.payload_crm;\n  payload.data.message.base64 = base64;\n\n  return [{ json: { ...item, payload_crm: payload, midia_ok: true, midia_bytes: bytes.length } }];\n} catch (e) {\n  return [{ json: { ...item, midia_ok: false, midia_erro: String(e).slice(0, 200) } }];\n}"
+      },
+      "id": "c1000000-0000-4000-8000-000000000004",
+      "name": "Baixar Midia (base64)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-20, -100]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose", "version": 3 },
+          "conditions": [
+            {
+              "id": "d1000000-0000-4000-8000-000000000002",
+              "leftValue": "={{ $json.entregar }}",
+              "rightValue": "true",
+              "operator": { "type": "string", "operation": "equals" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": "=false",
+        "options": {}
+      },
+      "id": "c1000000-0000-4000-8000-000000000005",
+      "name": "Modo Producao?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [200, -100]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://n8n-n8n.5k3mqv.easypanel.host/webhook/recados",
+        "authentication": "none",
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "headerParameters": {
+          "parameters": [{ "name": "Content-Type", "value": "application/json" }]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.payload_crm) }}",
+        "options": {
+          "response": { "response": { "fullResponse": true, "neverError": true, "responseFormat": "autodetect" } },
+          "timeout": 20000
+        }
+      },
+      "id": "c1000000-0000-4000-8000-000000000006",
+      "name": "Entregar ao CRM",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [420, -200]
+    },
+    {
+      "parameters": {},
+      "id": "c1000000-0000-4000-8000-000000000007",
+      "name": "Observando (nao entrega)",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [420, 0]
+    },
+    {
+      "parameters": {},
+      "id": "c1000000-0000-4000-8000-000000000008",
+      "name": "Ignorado",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [-20, 140]
+    }
+  ],
+  "connections": {
+    "Webhook WAHA Inbound": {
+      "main": [[{ "node": "Traduzir WAHA para formato CRM", "type": "main", "index": 0 }]]
+    },
+    "Traduzir WAHA para formato CRM": {
+      "main": [[{ "node": "Mensagem Util?", "type": "main", "index": 0 }]]
+    },
+    "Mensagem Util?": {
+      "main": [
+        [{ "node": "Baixar Midia (base64)", "type": "main", "index": 0 }],
+        [{ "node": "Ignorado", "type": "main", "index": 0 }]
+      ]
+    },
+    "Baixar Midia (base64)": {
+      "main": [[{ "node": "Modo Producao?", "type": "main", "index": 0 }]]
+    },
+    "Modo Producao?": {
+      "main": [
+        [{ "node": "Entregar ao CRM", "type": "main", "index": 0 }],
+        [{ "node": "Observando (nao entrega)", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": { "executionOrder": "v1" },
+  "pinData": {}
+}

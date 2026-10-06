@@ -1,0 +1,154 @@
+{
+  "name": "CRM - Editar Mensagem WhatsApp (v47.01)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "crm-editar-mensagem",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "a1000000-0000-4000-8000-000000000001",
+      "name": "Webhook Editar Mensagem",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [-460, 0],
+      "webhookId": "crm-editar-mensagem"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const body = $input.first().json.body ?? $input.first().json;\n\nconst externalId = body.external_id;\nconst newText = body.new_text;\nconst messageId = body.message_id;\nconst phoneRaw = body.phone ?? '';\n\nif (!externalId || !newText) {\n  return [{ json: { ok: false, message: 'external_id ou new_text ausente' } }];\n}\n\n// chatId no formato do WAHA. Se o proprio ID composto ja traz o chat\n// (ex.: \"true_5511999@c.us_3EB0...\" ou \"true_8186@lid_3EB0...\"), usamos ele:\n// e o endereco exato com que o WhatsApp conhece essa conversa, inclusive quando\n// e um @lid. Caso contrario caimos no telefone do contato.\nlet chatId = null;\nconst parts = String(externalId).split('_');\nif (parts.length >= 3 && parts[1].includes('@')) {\n  chatId = parts[1];\n} else {\n  const digits = String(phoneRaw).replace(/\\D/g, '');\n  if (digits) chatId = `${digits}@c.us`;\n}\n\nif (!chatId) {\n  return [{ json: { ok: false, message: 'nao foi possivel determinar o chat da mensagem' } }];\n}\n\nreturn [{\n  json: {\n    ok: true,\n    session: 'crmobesity',\n    chat_id: chatId,\n    message_id: messageId,\n    external_id: String(externalId),\n    new_text: String(newText)\n  }\n}];"
+      },
+      "id": "a1000000-0000-4000-8000-000000000002",
+      "name": "Montar Dados da Edicao",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-240, 0]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "b1000000-0000-4000-8000-000000000001",
+              "leftValue": "={{ $json.ok }}",
+              "rightValue": "true",
+              "operator": { "type": "string", "operation": "equals" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": "=false",
+        "options": {}
+      },
+      "id": "a1000000-0000-4000-8000-000000000003",
+      "name": "Dados Validos?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [-20, 0]
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "=https://n8n-waha.5k3mqv.easypanel.host/api/{{ $json.session }}/chats/{{ encodeURIComponent($json.chat_id) }}/messages/{{ encodeURIComponent($json.external_id) }}",
+        "authentication": "none",
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "headerParameters": {
+          "parameters": [
+            { "name": "X-Api-Key", "value": "COLE_AQUI_A_CHAVE_DO_WAHA" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"text\": {{ JSON.stringify($json.new_text) }}\n}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "autodetect"
+            }
+          },
+          "timeout": 20000
+        }
+      },
+      "id": "a1000000-0000-4000-8000-000000000004",
+      "name": "Editar no WAHA",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [200, -100]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const resp = $input.first().json;\nconst status = resp.statusCode ?? 0;\nconst payload = resp.body ?? resp;\n\nif (status >= 200 && status < 300) {\n  return [{ json: { success: true, message: 'Mensagem editada no WhatsApp' } }];\n}\n\n// O WAHA responde 4xx/5xx quando o motor da sessao nao implementa edicao\n// (\"The method is not implemented by the engine\") ou quando a mensagem e\n// antiga demais — o WhatsApp so permite editar ate ~15 minutos apos o envio.\nlet detail = '';\nif (typeof payload === 'string') detail = payload;\nelse detail = payload?.message || payload?.error || JSON.stringify(payload || {});\n\nlet friendly = `WhatsApp recusou (HTTP ${status})`;\nif (/not implemented|unsupported|nao implementad/i.test(detail)) {\n  friendly = 'o motor atual do WhatsApp (WAHA) nao suporta edicao';\n} else if (/too old|15 min|expired|timeout/i.test(detail)) {\n  friendly = 'a mensagem e antiga demais (o WhatsApp so deixa editar por ~15 minutos)';\n} else if (detail) {\n  friendly = `WhatsApp recusou: ${String(detail).slice(0, 200)}`;\n}\n\nreturn [{ json: { success: false, message: friendly, http_status: status, raw: String(detail).slice(0, 500) } }];"
+      },
+      "id": "a1000000-0000-4000-8000-000000000005",
+      "name": "Avaliar Resposta WAHA",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [420, -100]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const m = $input.first().json.message ?? 'dados invalidos';\nreturn [{ json: { success: false, message: m } }];"
+      },
+      "id": "a1000000-0000-4000-8000-000000000006",
+      "name": "Dados Invalidos",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [200, 120]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "a1000000-0000-4000-8000-000000000007",
+      "name": "Responder ao CRM",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [660, 0]
+    }
+  ],
+  "connections": {
+    "Webhook Editar Mensagem": {
+      "main": [[{ "node": "Montar Dados da Edicao", "type": "main", "index": 0 }]]
+    },
+    "Montar Dados da Edicao": {
+      "main": [[{ "node": "Dados Validos?", "type": "main", "index": 0 }]]
+    },
+    "Dados Validos?": {
+      "main": [
+        [{ "node": "Editar no WAHA", "type": "main", "index": 0 }],
+        [{ "node": "Dados Invalidos", "type": "main", "index": 0 }]
+      ]
+    },
+    "Editar no WAHA": {
+      "main": [[{ "node": "Avaliar Resposta WAHA", "type": "main", "index": 0 }]]
+    },
+    "Avaliar Resposta WAHA": {
+      "main": [[{ "node": "Responder ao CRM", "type": "main", "index": 0 }]]
+    },
+    "Dados Invalidos": {
+      "main": [[{ "node": "Responder ao CRM", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": { "executionOrder": "v1" },
+  "pinData": {}
+}

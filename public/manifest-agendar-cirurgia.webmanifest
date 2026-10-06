@@ -1,0 +1,9 @@
+{
+  "name": "Agendar Cirurgia",
+  "short_name": "Cirurgia",
+  "display": "browser",
+  "icons": [
+    { "src": "/agendar-cirurgia-icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/agendar-cirurgia-icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}
