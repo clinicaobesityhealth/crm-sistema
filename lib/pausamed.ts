@@ -110,6 +110,8 @@ function nomeBase(nomeInformado: string): string {
   return resultado || nomeInformado
 }
 
+export type FonteConsultada = { titulo: string; url: string }
+
 export type RegraMedicamento = {
   encontrado: boolean
   fonte: 'hospital' | 'clinica' | 'hospital_importada' | 'geral' | 'clinica_ia' | 'ia' | null
@@ -124,6 +126,26 @@ export type RegraMedicamento = {
   // comentário grande na migração 20260930_referencia_medicamento_v48_144.sql
   // — isto NÃO é uma busca ao vivo na internet quando fonte é 'ia'.
   fonteReferencia: string | null
+
+  // v48.172 — "Auditoria" (nome dado pelo Jorge): só vem preenchido quando
+  // fonte === 'ia' (ou 'clinica_ia', reaproveitando uma pesquisa de IA salva
+  // antes) — ver workflow "CRM - Pesquisar Remédio (IA)" no n8n, que agora
+  // faz busca ao vivo (Google Search) antes de responder. Nos tiers do
+  // PausaMed (hospital/clinica/geral) estes campos ficam no valor vazio
+  // porque não se aplicam: são regras estruturadas, não uma pesquisa de IA.
+  motivoSuspensao: string | null       // o PORQUÊ, em linguagem simples — para a equipe conferir antes de aprovar
+  fontesConsultadas: FonteConsultada[] // o que a IA realmente abriu numa busca ao vivo agora
+  confiabilidade: 'alta' | 'media' | 'baixa' | null
+  auditado: boolean                    // true só quando uma fonte em fontesConsultadas veio de busca ao vivo real
+
+  // v48.172 — correção automática de erro de digitação no nome (pedido do
+  // Jorge: "COONDROFLEX" → "Condroflex" sem precisar digitar de novo). Quem
+  // decide se aplica ao cadastro da cirurgia é o chamador (API route), nunca
+  // esta função — aqui só repassamos o que a IA encontrou.
+  nomeCorrigido: string | null
+  correcaoAutomatica: boolean
+  correcaoDetalhe: string | null
+
   erro?: string
 }
 
@@ -131,6 +153,8 @@ const VAZIA: RegraMedicamento = {
   encontrado: false, fonte: null, fonteDetalhe: null, principioAtivo: null,
   nomesComerciais: null, prazoSuspensaoDias: null, explicacaoPaciente: null,
   clinicalNotes: null, fonteReferencia: null,
+  motivoSuspensao: null, fontesConsultadas: [], confiabilidade: null, auditado: false,
+  nomeCorrigido: null, correcaoAutomatica: false, correcaoDetalhe: null,
 }
 
 // Prioridade (nunca a regra geral por cima da do hospital):
@@ -330,6 +354,15 @@ async function buscarNaBaseClinica(admin: ReturnType<typeof getSupabaseAdmin>, t
     // dias" — não uma referência de verdade). A coluna certa é `referencia`
     // (nova, ver migração v48.144).
     fonteReferencia: r.referencia || null,
+    // v48.172 — esta linha veio de uma pesquisa de IA já auditada antes (ver
+    // migração 20261007_auditoria_medicamentos_ia_v48_172.sql) — repassa a
+    // mesma auditoria em vez de descartá-la, já que é a mesma informação,
+    // só reaproveitada para não gastar IA de novo.
+    motivoSuspensao: r.motivo_suspensao || null,
+    fontesConsultadas: Array.isArray(r.fontes_consultadas) ? r.fontes_consultadas : [],
+    confiabilidade: r.confiabilidade || null,
+    auditado: !!r.auditado,
+    nomeCorrigido: null, correcaoAutomatica: false, correcaoDetalhe: null,
   }
 }
 
@@ -347,16 +380,29 @@ async function buscarNaBaseClinica(admin: ReturnType<typeof getSupabaseAdmin>, t
 // devolve um "erro" diferenciado quando a BUSCA em si falhou (rede/timeout)
 // — resolverMedicamento() repassa isso para a tela, que agora consegue
 // avisar "a pesquisa falhou, tente de novo" em vez de "não encontrado".
-async function chamarWebhookIA(url: string, nomeInformado: string, hospitalNome: string | null) {
-  const r = await fetch(url, {
+// v48.172 — "Erro 502" relatado pelo Jorge na Sinvastatina: o timeout aqui
+// era 45s, mas uma pesquisa de verdade (agora com busca ao vivo no Google,
+// ver comentário grande abaixo em pesquisarComIA) mede, em testes reais,
+// entre ~55s e ~120s. Ou seja: o 502 muito provavelmente nunca foi um erro
+// da IA — era o nosso PRÓPRIO código desistindo (AbortSignal.timeout) bem
+// antes da resposta chegar, ou o proxy reverso na frente do n8n/CRM
+// (EasyPanel/Traefik) cortando a conexão primeiro. Subindo para 170s aqui
+// cobre com folga o pior caso já medido (~120s). IMPORTANTE: se o "Erro 502"
+// persistir mesmo assim, o próximo lugar a verificar é o timeout do proxy
+// reverso do EasyPanel na frente do CRM e/ou do n8n — um timeout de 170s
+// aqui no código não adianta se o proxy na frente cortar a conexão antes
+// disso (por exemplo, muitos ficam com um padrão de 60s).
+function chamarWebhookIA(url: string, nomeInformado: string, hospitalNome: string | null) {
+  return fetch(url, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ nome: nomeInformado, hospital: hospitalNome || '' }),
-    signal: AbortSignal.timeout(45000),
+    signal: AbortSignal.timeout(170000),
+  }).then(async (r) => {
+    if (!r.ok) throw new Error(`Webhook da IA devolveu ${r.status}`)
+    const j: any = await r.json().catch(() => null)
+    if (!j) throw new Error('Resposta da IA não veio em JSON válido')
+    return j
   })
-  if (!r.ok) throw new Error(`Webhook da IA devolveu ${r.status}`)
-  const j: any = await r.json().catch(() => null)
-  if (!j) throw new Error('Resposta da IA não veio em JSON válido')
-  return j
 }
 
 // Workflow "CRM - Pesquisar Remédio (IA)" no n8n: recebe {nome, hospital},
@@ -371,20 +417,48 @@ async function pesquisarComIA(nomeInformado: string, hospitalNome: string | null
   for (let tentativa = 1; tentativa <= 2; tentativa++) {
     try {
       const j = await chamarWebhookIA(url, nomeInformado, hospitalNome)
-      if (!j.encontrado) return { ...VAZIA } // IA rodou de verdade e não conhece o remédio — "não encontrado" legítimo
+
+      // v48.172 — a IA agora corrige sozinha erro de digitação no nome (ex.:
+      // "Coondroflex" -> "Condroflex") E explica mesmo quando NÃO encontrou
+      // nada (ver correcao_detalhe/confiabilidade/auditado no workflow "CRM -
+      // Pesquisar Remédio (IA)") — por isso repassamos esses três campos nos
+      // dois casos (encontrado true ou false), não só quando acha o remédio.
+      const auditoriaBase = {
+        confiabilidade: (['alta', 'media', 'baixa'].includes(j.confiabilidade) ? j.confiabilidade : null) as RegraMedicamento['confiabilidade'],
+        auditado: !!j.auditado,
+        nomeCorrigido: j.nome_corrigido || null,
+        correcaoAutomatica: !!j.correcao_automatica,
+        correcaoDetalhe: j.correcao_detalhe || null,
+      }
+
+      if (!j.encontrado) {
+        // IA rodou de verdade (inclusive buscou na internet) e não achou um
+        // remédio confiável — "não encontrado" legítimo, mas ainda assim
+        // explicado (ver correcaoDetalhe/observações na tela).
+        return { ...VAZIA, ...auditoriaBase }
+      }
+
+      const fontes: FonteConsultada[] = Array.isArray(j.fontes_consultadas)
+        ? j.fontes_consultadas
+            .filter((f: any) => f && (f.url || f.titulo))
+            .map((f: any) => ({ titulo: String(f.titulo || '').trim(), url: String(f.url || '').trim() }))
+        : []
+
       return {
         encontrado: true, fonte: 'ia', fonteDetalhe: 'Pesquisado agora por IA — confira com atenção antes de aprovar',
         principioAtivo: j.principio_ativo || null, nomesComerciais: j.nomes_comerciais || null,
         prazoSuspensaoDias: j.prazo_suspensao_dias != null ? Number(j.prazo_suspensao_dias) : null,
         explicacaoPaciente: j.explicacao_paciente || null, clinicalNotes: j.orientacao || null,
         // v48.144 — Antes lia j.prazo_texto aqui (mesmo desencontro do
-        // comentário acima). Agora vem do novo campo `referencia` que o
-        // workflow "CRM - Pesquisar Remédio (IA)" passou a devolver — de
-        // onde a IA tirou a informação (bula, diretriz...), para a equipe
-        // conferir. Vem do conhecimento treinado da IA, não de uma busca ao
-        // vivo — o workflow não tem hoje uma ferramenta de busca na internet
-        // configurada.
+        // comentário acima). Agora vem do campo `referencia` que o workflow
+        // "CRM - Pesquisar Remédio (IA)" devolve — descrição por extenso das
+        // fontes usadas.
         fonteReferencia: j.referencia || null,
+        // v48.172 — "auditoria" (nome dado pelo Jorge): motivo em linguagem
+        // simples + as fontes reais que a IA abriu numa busca ao vivo agora.
+        motivoSuspensao: j.motivo || null,
+        fontesConsultadas: fontes,
+        ...auditoriaBase,
       }
     } catch (e: any) {
       ultimoErro = e
@@ -393,7 +467,10 @@ async function pesquisarComIA(nomeInformado: string, hospitalNome: string | null
     }
   }
   // Duas tentativas falharam sem nunca rodar a IA de verdade — isso é
-  // diferente de "não encontrado", e a tela precisa saber a diferença.
+  // diferente de "não encontrado", e a tela precisa saber a diferença. Ver
+  // o comentário grande em chamarWebhookIA() sobre o timeout de 170s: se
+  // isto continuar falhando com "ia_falhou" (não com um erro HTTP vindo do
+  // n8n), o próximo lugar a olhar é o timeout do proxy reverso do EasyPanel.
   return { ...VAZIA, erro: 'ia_falhou: ' + (ultimoErro?.message || ultimoErro || 'motivo desconhecido') }
 }
 
@@ -485,5 +562,10 @@ function linha(r: any, fonte: RegraMedicamento['fonte'], fonteDetalhe: string): 
     explicacaoPaciente: r.patient_explanation || null,
     clinicalNotes: r.clinical_notes || null,
     fonteReferencia: r.source_reference || null,
+    // v48.172 — regra estruturada do PausaMed, não uma pesquisa de IA agora
+    // — estes campos de auditoria não se aplicam aqui (ver comentário no
+    // tipo RegraMedicamento).
+    motivoSuspensao: null, fontesConsultadas: [], confiabilidade: null, auditado: false,
+    nomeCorrigido: null, correcaoAutomatica: false, correcaoDetalhe: null,
   }
 }

@@ -1,7 +1,7 @@
 'use client'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { supabase } from '@/lib/supabase'
-import { Pill, Plus, Trash2, Loader2, Sparkles, Check, Download, AlertCircle, Clock } from 'lucide-react'
+import { Pill, Plus, Trash2, Loader2, Sparkles, Check, Download, AlertCircle, Clock, SpellCheck, ShieldCheck, ShieldAlert } from 'lucide-react'
 import SuspensaoMedicamentosAtalho from './SuspensaoMedicamentosAtalho'
 
 // v48.97 — Medicações da cirurgia, base para a orientação de suspensão
@@ -32,10 +32,99 @@ import SuspensaoMedicamentosAtalho from './SuspensaoMedicamentosAtalho'
 // continua digitando e clica Adicionar sem escolher nada funciona igual a
 // antes.
 
+type FonteConsultada = { titulo: string; url: string }
+
 type Medicamento = {
   id: string; nome_informado: string; principio_ativo: string | null
   prazo_suspensao_dias: number | null; explicacao_paciente: string | null
   fonte: string | null; fonte_detalhe: string | null; fonte_referencia: string | null; status: string
+  // v48.172 — "Auditoria" (nome dado pelo Jorge): preenchido quando a
+  // pesquisa foi (ou reaproveitou) uma busca ao vivo por IA. Ver migração
+  // 20261007_auditoria_medicamentos_ia_v48_172.sql.
+  nome_digitado_original?: string | null
+  correcao_automatica?: boolean
+  correcao_detalhe?: string | null
+  motivo_suspensao?: string | null
+  fontes_consultadas?: FonteConsultada[]
+  confiabilidade?: 'alta' | 'media' | 'baixa' | null
+  auditado?: boolean
+}
+
+// v48.172 — Selo de confiabilidade que a própria IA atribui à resposta
+// (quão confiável ela julga a fonte que achou AGORA para este medicamento
+// específico) — mostrado junto da auditoria, para a equipe saber o quanto
+// pode confiar sem reabrir a fonte.
+function SeloConfiabilidade({ nivel }: { nivel?: 'alta' | 'media' | 'baixa' | null }) {
+  if (!nivel) return null
+  const estilos: Record<string, string> = {
+    alta: 'bg-emerald-100 text-emerald-700',
+    media: 'bg-amber-100 text-amber-700',
+    baixa: 'bg-red-100 text-red-700',
+  }
+  const texto: Record<string, string> = {
+    alta: 'confiabilidade alta', media: 'confiabilidade média', baixa: 'confiabilidade baixa — confira com atenção',
+  }
+  const Icone = nivel === 'baixa' ? ShieldAlert : ShieldCheck
+  return (
+    <span className={'inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-semibold normal-case ' + (estilos[nivel] || 'bg-slate-100 text-slate-500')}>
+      <Icone size={10}/> {texto[nivel] || nivel}
+    </span>
+  )
+}
+
+// v48.172 — Painel de "auditoria" da pesquisa por IA: pedido do Jorge para
+// que a janela roxa sempre mostre, de forma fixa, o MOTIVO da suspensão em
+// palavras simples, a REFERÊNCIA/fontes de onde veio, e avise quando o nome
+// do remédio foi corrigido sozinho por erro de digitação. Reaproveitado nos
+// dois lugares onde o resultado de uma pesquisa por IA aparece: a pergunta
+// de "salvar na base da clínica?" (logo após consultar) e o remédio já
+// salvo, ao expandir a linha (para conferir de novo antes de aprovar).
+function PainelAuditoria({ m }: { m: Medicamento }) {
+  const fontes = Array.isArray(m.fontes_consultadas) ? m.fontes_consultadas.filter(f => f && (f.url || f.titulo)) : []
+  const temAlgo = !!(m.motivo_suspensao || m.correcao_automatica || fontes.length || m.confiabilidade || m.fonte_referencia)
+  if (!temAlgo) return null
+  return (
+    <div className="rounded-lg border border-violet-200 bg-violet-50 px-2.5 py-2 space-y-1.5">
+      <p className="text-[11px] font-bold text-violet-800 flex items-center gap-1.5 flex-wrap uppercase tracking-wide">
+        <Sparkles size={12}/> Auditoria da IA
+        <SeloConfiabilidade nivel={m.confiabilidade}/>
+        {!m.auditado && (
+          <span className="text-[10px] text-violet-500 font-normal normal-case">(sem busca ao vivo confirmada — confira com atenção redobrada)</span>
+        )}
+      </p>
+      {m.correcao_automatica && (
+        <p className="text-[11px] text-violet-700 flex items-start gap-1.5">
+          <SpellCheck size={13} className="shrink-0 mt-0.5"/>
+          <span>
+            <strong>Nome corrigido automaticamente</strong>
+            {m.nome_digitado_original && <> — você digitou "{m.nome_digitado_original}", a IA reconheceu como "{m.nome_informado}"</>}
+            {m.correcao_detalhe && <>. {m.correcao_detalhe}</>}
+          </span>
+        </p>
+      )}
+      {m.motivo_suspensao && (
+        <p className="text-[11px] text-violet-800"><strong>Motivo:</strong> {m.motivo_suspensao}</p>
+      )}
+      {fontes.length > 0 ? (
+        <div className="text-[11px] text-violet-700">
+          <strong>Fontes consultadas agora:</strong>
+          <ul className="mt-0.5 space-y-0.5">
+            {fontes.map((f, i) => (
+              <li key={i}>
+                {f.url ? (
+                  <a href={f.url} target="_blank" rel="noopener noreferrer" className="underline hover:text-violet-900 break-all">
+                    {f.titulo || f.url}
+                  </a>
+                ) : f.titulo}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : m.fonte_referencia ? (
+        <p className="text-[11px] text-violet-700/80">Referência: {m.fonte_referencia}</p>
+      ) : null}
+    </div>
+  )
 }
 
 const FONTE_LABEL: Record<string, string> = {
@@ -217,7 +306,16 @@ export default function MedicamentosCirurgia({ cirurgiaId }: { cirurgiaId: strin
       const j = await r.json().catch(() => ({}))
       if (!r.ok) throw new Error(j.erro || `Erro ${r.status}`)
       await carregar()
-      if (!j.encontrado) setErro('Não achei regra para este medicamento — nem no PausaMed, nem na base da clínica, nem pesquisando agora com IA. Preencha prazo e orientação manualmente abaixo.')
+      // v48.172 — Quando a IA pesquisou de verdade (buscou na internet) e
+      // ainda assim não achou nada confiável, ela agora explica o porquê
+      // (correcao_detalhe) — mostra essa explicação em vez de só "não
+      // achei", para a equipe saber se foi erro de digitação, nome ambíguo
+      // ou remédio realmente desconhecido.
+      if (!j.encontrado) {
+        const motivo = j.medicamento?.correcao_detalhe
+        setErro('Não achei regra confiável para este medicamento — nem no PausaMed, nem na base da clínica, nem pesquisando agora com IA.'
+          + (motivo ? ' ' + motivo : '') + ' Preencha prazo e orientação manualmente abaixo, ou confira a grafia do nome.')
+      }
       // v48.112 — Achou agora mesmo pesquisando com IA (fonte 'ia'): pergunta
       // se quer guardar na base da própria clínica, para a próxima pessoa que
       // digitar o mesmo remédio não pagar IA de novo. Só pergunta nesse caso —
@@ -285,12 +383,10 @@ export default function MedicamentosCirurgia({ cirurgiaId }: { cirurgiaId: strin
               </span>
             )}
           </p>
-          {/* v48.144 — De onde a IA tirou a informação (bula, diretriz...),
-              para conferir ANTES de decidir salvar na base da clínica — vem
-              do conhecimento treinado da IA, não de uma busca ao vivo. */}
-          {confirmarBase.fonte_referencia && (
-            <p className="text-[11px] text-violet-700/80">Referência: {confirmarBase.fonte_referencia}</p>
-          )}
+          {/* v48.172 — "Auditoria" completa (motivo, fontes buscadas ao vivo,
+              confiabilidade e aviso de correção de nome) ANTES de decidir
+              salvar na base da clínica — ver PainelAuditoria acima. */}
+          <PainelAuditoria m={confirmarBase}/>
           <p className="text-[11px] text-violet-700/80">
             Quer salvar na base da própria clínica? Assim a próxima cirurgia com este remédio já vem pronta,
             sem precisar pesquisar de novo.
@@ -385,7 +481,20 @@ export default function MedicamentosCirurgia({ cirurgiaId }: { cirurgiaId: strin
                           placeholder="Explicação simples, em linguagem de paciente" className={input}/>
                       </div>
                       {m.fonte_detalhe && <p className="text-[11px] text-slate-400">Fonte: {m.fonte_detalhe}</p>}
-                      {m.fonte_referencia && <p className="text-[11px] text-slate-400">Referência: {m.fonte_referencia}</p>}
+                      {/* v48.172 — Auditoria fixa aqui também (não só na hora
+                          da pesquisa): a equipe precisa poder reconferir
+                          motivo/fontes/confiabilidade antes de aprovar,
+                          mesmo reabrindo o remédio depois. Pedido do Jorge:
+                          "ESSE RESUMO... PRECISA SER 100% CONFIÁVEL... VOU
+                          CHAMAR ASSIM DE AUDITORIA". Para fonte que não veio
+                          de IA (PausaMed/manual), só aparece a referência
+                          simples de antes (dentro do painel, como fallback).
+                      */}
+                      {(m.fonte === 'ia' || m.fonte === 'clinica_ia') ? (
+                        <PainelAuditoria m={m}/>
+                      ) : (
+                        m.fonte_referencia && <p className="text-[11px] text-slate-400">Referência: {m.fonte_referencia}</p>
+                      )}
                     </div>
                   )}
                 </div>

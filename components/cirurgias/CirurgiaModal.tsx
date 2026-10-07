@@ -3,11 +3,12 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/lib/AuthContext'
-import { X, Save, Loader2, Scissors, History, Trash2, FileText, MessageCircle } from 'lucide-react'
+import { X, Save, Loader2, Scissors, History, Trash2, FileText, MessageCircle, Stethoscope } from 'lucide-react'
 import BuscaPaciente from './BuscaPaciente'
 import DescricaoCirurgica from './DescricaoCirurgica'
 import DocumentosCirurgia from './DocumentosCirurgia'
 import MedicamentosCirurgia from './MedicamentosCirurgia'
+import ProntuarioPanel from '../ProntuarioPanel'
 import DiagnosticosDaCirurgia from './DiagnosticosDaCirurgia'
 import MensagemAoPaciente from './MensagemAoPaciente'
 import SelectComCriar from './SelectComCriar'
@@ -209,6 +210,12 @@ export default function CirurgiaModal({ cirurgia, onFechar, onSalvo, focarMedica
   const [preco, setPreco] = useState<Preco | null>(null)
   const [historico, setHistorico] = useState<Historico[]>([])
   const [verHistorico, setVerHistorico] = useState(false)
+  // v48.172 — Pedido do Jorge: abrir o prontuário (MedX) do paciente direto
+  // daqui, igual ao atalho que já existe na Agenda Médica (mesmo componente,
+  // ProntuarioPanel, que já resolve pelo nome/telefone — não depende de
+  // contact_id do CRM, por isso não precisa da mesma trava do botão de
+  // conversa). Mesmo overlay usado em app/agenda-medica/page.tsx.
+  const [verProntuario, setVerProntuario] = useState(false)
 
   // v48.102 — As listas de materiais de cada procedimento (a mesma tabela do
   // link do cirurgião) e qual está escolhida aqui, por procedimento_id.
@@ -613,6 +620,16 @@ export default function CirurgiaModal({ cirurgia, onFechar, onSalvo, focarMedica
               <button onClick={() => router.push(`/inbox?contact=${f.contact_id}`)}
                 className="p-1.5 rounded-md text-slate-400 hover:text-brand-600 hover:bg-brand-50"
                 title="Iniciar conversa com o paciente"><MessageCircle size={16}/></button>
+            )}
+            {/* v48.172 — Pedido do Jorge: abrir o prontuário (MedX) sem sair
+                da edição da cirurgia. ProntuarioPanel busca pelo nome/
+                telefone digitados no formulário — funciona mesmo numa
+                cirurgia nova, ainda sem contact_id, desde que o paciente já
+                tenha sido preenchido. */}
+            {f.paciente_nome.trim() && (
+              <button onClick={() => setVerProntuario(true)}
+                className="p-1.5 rounded-md text-slate-400 hover:text-brand-600 hover:bg-brand-50"
+                title="Abrir prontuário"><Stethoscope size={16}/></button>
             )}
             {!novo && (
               <button onClick={() => setVerHistorico(v => !v)}
@@ -1229,6 +1246,27 @@ export default function CirurgiaModal({ cirurgia, onFechar, onSalvo, focarMedica
               {verificandoSenhaPago ? <Loader2 size={13} className="animate-spin"/> : null}
               Confirmar
             </button>
+          </div>
+        </div>
+      </div>
+    )}
+
+    {/* v48.172 — Mesmo overlay de prontuário já usado em
+        app/agenda-medica/page.tsx (ProntuarioPanel), z-index acima do modal
+        de cirurgia (z-50) para abrir por cima dele. */}
+    {verProntuario && (
+      <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center z-[60] p-4"
+        onClick={() => setVerProntuario(false)}>
+        <div onClick={e => e.stopPropagation()} className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[85vh] overflow-hidden flex flex-col">
+          <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 flex-shrink-0">
+            <div>
+              <h2 className="text-base font-semibold text-slate-800">Prontuário</h2>
+              <p className="text-xs text-slate-400">{f.paciente_nome}</p>
+            </div>
+            <button onClick={() => setVerProntuario(false)} className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-400"><X size={18}/></button>
+          </div>
+          <div className="flex-1 overflow-y-auto">
+            <ProntuarioPanel nome={f.paciente_nome} telefone={f.paciente_telefone}/>
           </div>
         </div>
       </div>

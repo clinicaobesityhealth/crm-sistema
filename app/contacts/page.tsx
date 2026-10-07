@@ -22,10 +22,11 @@ import {
 } from '@/lib/atendimentoDoContato'
 import NewContactModal from '@/components/NewContactModal'
 import ContactAvatar from '@/components/ContactAvatar'
+import ProntuarioPanel from '@/components/ProntuarioPanel'
 import {
   Search, Upload, Plus, Phone, Mail, Tag, MessageSquare,
   X, FileText, Link as LinkIcon, Loader2, CheckCircle2, AlertCircle, UserPlus, Pencil, Trash2, Ban, ShieldCheck,
-  Headphones
+  Headphones, Stethoscope
 } from 'lucide-react'
 import { useAuth } from '@/lib/AuthContext'
 import { format } from 'date-fns'
@@ -44,6 +45,11 @@ export default function ContactsPage() {
   const [showImport, setShowImport] = useState(false)
   const [detailContact, setDetailContact] = useState<Contact | null>(null)
   const [detailEditMode, setDetailEditMode] = useState(false)
+  // v48.172 — Pedido do Jorge: abrir o prontuário direto da lista, sem
+  // precisar entrar no cadastro completo — mesmo atalho do balãozinho de
+  // conversa, agora com um ícone ao lado (ProntuarioPanel, mesmo componente
+  // da Agenda Médica e da edição de cirurgia).
+  const [prontuarioContact, setProntuarioContact] = useState<Contact | null>(null)
   const [assignContact, setAssignContact] = useState<Contact | null>(null)
   const [historyContact, setHistoryContact] = useState<Contact | null>(null)
   const [conflictContact, setConflictContact] = useState<Contact | null>(null)
@@ -575,6 +581,12 @@ export default function ContactsPage() {
                           <MessageSquare size={15}/>
                         </button>
                         <button
+                          onClick={() => setProntuarioContact(c)}
+                          title="Abrir prontuário"
+                          className="p-1.5 rounded-lg text-slate-300 hover:text-brand-600 hover:bg-brand-50 transition-colors">
+                          <Stethoscope size={15}/>
+                        </button>
+                        <button
                           onClick={() => setBloqueioAberto(c)}
                           disabled={mudandoBloqueio === c.id}
                           title={estaBloqueado(c)
@@ -648,6 +660,26 @@ export default function ContactsPage() {
           // inbox recusa abrir conversa fechada — por isso não acontecia nada.
           onStartConversation={(c) => { setDetailContact(null); openConversation(c) }}
         />
+      )}
+
+      {/* v48.172 — Prontuário direto do balãozinho da lista, mesmo overlay da
+          Agenda Médica e da edição de cirurgia. */}
+      {prontuarioContact && (
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+          onClick={() => setProntuarioContact(null)}>
+          <div onClick={e => e.stopPropagation()} className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[85vh] overflow-hidden flex flex-col">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 flex-shrink-0">
+              <div>
+                <h2 className="text-base font-semibold text-slate-800">Prontuário</h2>
+                <p className="text-xs text-slate-400">{prontuarioContact.full_name}</p>
+              </div>
+              <button onClick={() => setProntuarioContact(null)} className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-400"><X size={18}/></button>
+            </div>
+            <div className="flex-1 overflow-y-auto">
+              <ProntuarioPanel nome={prontuarioContact.full_name} telefone={prontuarioContact.phone}/>
+            </div>
+          </div>
+        </div>
       )}
 
       {historyContact && (

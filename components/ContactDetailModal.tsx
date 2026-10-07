@@ -8,6 +8,7 @@ import ChannelBadge from '@/components/ChannelBadge'
 import InstagramIcon from '@/components/icons/InstagramIcon'
 import ContactAvatar from '@/components/ContactAvatar'
 import CopiarTexto from '@/components/CopiarTexto'
+import ProntuarioPanel from '@/components/ProntuarioPanel'
 import UnirCadastros, { InstagramVinculados } from '@/components/UnirCadastros'
 import { psidDoContato, ehSomenteInstagram } from '@/lib/instagram'
 import {
@@ -67,6 +68,10 @@ export default function ContactDetailModal({ contact, startInEdit = false, onClo
   const [medxNaoEncontrado, setMedxNaoEncontrado] = useState(false)
   const [medxGravando, setMedxGravando] = useState(false)
   const [medxResultado, setMedxResultado] = useState<{ ok: boolean; text: string } | null>(null)
+  // v48.172 — Pedido do Jorge: abrir o prontuário (MedX) direto daqui, mesmo
+  // atalho já usado em Agenda Médica e na edição de cirurgia (ProntuarioPanel,
+  // resolve pelo nome/telefone — não depende de medx_id já vinculado).
+  const [verProntuario, setVerProntuario] = useState(false)
 
   useEffect(() => {
     // Carrega tags cadastradas para sugestão
@@ -501,6 +506,14 @@ export default function ContactDetailModal({ contact, startInEdit = false, onClo
             </div>
           </div>
           <div className="flex items-center gap-1">
+            {!editing && (
+              <button
+                onClick={() => setVerProntuario(true)}
+                title="Abrir prontuário"
+                className="p-2 hover:bg-slate-100 rounded-lg text-slate-400 hover:text-brand-600 transition-colors">
+                <Stethoscope size={16}/>
+              </button>
+            )}
             {!editing && (
               <button
                 onClick={() => setEditing(true)}
@@ -1083,6 +1096,27 @@ export default function ContactDetailModal({ contact, startInEdit = false, onClo
           </>)}
         </div>
       </div>
+
+      {/* v48.172 — Mesmo overlay de prontuário usado em Agenda Médica e na
+          edição de cirurgia (ProntuarioPanel), por cima deste modal
+          (z-50) — por isso z-[60] aqui. */}
+      {verProntuario && (
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center z-[60] p-4"
+          onClick={() => setVerProntuario(false)}>
+          <div onClick={e => e.stopPropagation()} className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[85vh] overflow-hidden flex flex-col">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 flex-shrink-0">
+              <div>
+                <h2 className="text-base font-semibold text-slate-800">Prontuário</h2>
+                <p className="text-xs text-slate-400">{contact.full_name}</p>
+              </div>
+              <button onClick={() => setVerProntuario(false)} className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-400"><X size={18}/></button>
+            </div>
+            <div className="flex-1 overflow-y-auto">
+              <ProntuarioPanel nome={contact.full_name} telefone={contact.phone}/>
+            </div>
+          </div>
+        </div>
+      )}
 
       <style jsx global>{`
         .field-input {
