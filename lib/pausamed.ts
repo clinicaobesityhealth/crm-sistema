@@ -19,6 +19,28 @@ import { getSupabaseAdmin } from '@/lib/supabaseAdmin'
 // Sem as duas variáveis configuradas, resolverMedicamento() devolve
 // encontrado:false com um aviso claro em vez de quebrar a geração do PDF.
 
+// v48.173 — As consultas ao PausaMed (Supabase de um projeto diferente do
+// nosso) nunca tiveram proteção de timeout — ao contrário da pesquisa por
+// IA, que já tem (ver chamarWebhookIA). Suspeita forte: o "Erro 502" que o
+// Jorge sempre viu na Sinvastatina (remédio comum, quase certamente já
+// cadastrado no PausaMed) nunca foi a IA — é esta consulta aqui, que pode
+// fazer até 4 idas e voltas sequenciais a um projeto Supabase externo (tiers
+// 1/2/3 abaixo, um por um). Se o PausaMed estiver lento, cada await aqui
+// ficava esperando sem limite, até o proxy reverso na frente do CRM
+// (EasyPanel/Traefik) cortar a conexão sozinho — um 502 "mudo", sem corpo
+// JSON, exatamente o sintoma relatado. Agora cada consulta desiste sozinha
+// depois de 10s, com uma mensagem clara, bem antes de qualquer proxy cortar
+// por conta própria.
+function comTimeout<T>(promessa: PromiseLike<T>, ms: number, rotulo: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error(`${rotulo} demorou mais que ${Math.round(ms / 1000)}s para responder — o PausaMed pode estar lento ou fora do ar agora.`)), ms)
+    Promise.resolve(promessa).then(
+      (v) => { clearTimeout(t); resolve(v) },
+      (e) => { clearTimeout(t); reject(e) },
+    )
+  })
+}
+
 function clientePausaMed() {
   const url = process.env.PAUSAMED_SUPABASE_URL || ''
   const key = process.env.PAUSAMED_SUPABASE_KEY || ''
@@ -119,6 +141,12 @@ export type RegraMedicamento = {
   principioAtivo: string | null
   nomesComerciais: string | null
   prazoSuspensaoDias: number | null
+  // v48.173 — o prazo por extenso, do jeito que a fonte descreveu (ex.: "14
+  // dias" ou "10 a 14 dias, dependendo da dose") — pode trazer variantes que
+  // o número sozinho (prazoSuspensaoDias) não mostra. Pedido do Jorge depois
+  // de ver a Auditoria sem o prazo. Preenchido em qualquer tier que tenha um
+  // texto de prazo disponível, não só na IA.
+  prazoTexto: string | null
   explicacaoPaciente: string | null
   clinicalNotes: string | null
   // v48.144 — de onde veio a orientação (bula, diretriz de sociedade médica,
@@ -151,7 +179,7 @@ export type RegraMedicamento = {
 
 const VAZIA: RegraMedicamento = {
   encontrado: false, fonte: null, fonteDetalhe: null, principioAtivo: null,
-  nomesComerciais: null, prazoSuspensaoDias: null, explicacaoPaciente: null,
+  nomesComerciais: null, prazoSuspensaoDias: null, prazoTexto: null, explicacaoPaciente: null,
   clinicalNotes: null, fonteReferencia: null,
   motivoSuspensao: null, fontesConsultadas: [], confiabilidade: null, auditado: false,
   nomeCorrigido: null, correcaoAutomatica: false, correcaoDetalhe: null,
@@ -238,18 +266,21 @@ export async function resolverMedicamento(opts: {
   // e propagados em vez de engolidos em silêncio.
   let base: any = null
   try {
-    const { data: baseRows, error: erroBase } = await sb.from('clinical_rules')
-      .select('*').or(orNome('medication_name', 'active_ingredient'))
-      .eq('is_active', true).limit(1)
+    const { data: baseRows, error: erroBase } = await comTimeout(
+      sb.from('clinical_rules').select('*').or(orNome('medication_name', 'active_ingredient')).eq('is_active', true).limit(1),
+      10000, 'Consulta ao PausaMed (regra base)',
+    )
     if (erroBase) return { ...VAZIA, erro: 'Não consegui consultar o PausaMed: ' + erroBase.message }
     base = baseRows?.[0] || null
 
     if (base) {
       // 1) Regra específica do hospital selecionado
       if (hospitalNome) {
-        const { data, error } = await sb.from('hospital_protocol_standards')
-          .select('*').eq('base_rule_id', base.id)
-          .ilike('hospital_name', `%${hospitalNome}%`).eq('is_active', true).limit(1)
+        const { data, error } = await comTimeout(
+          sb.from('hospital_protocol_standards').select('*').eq('base_rule_id', base.id)
+            .ilike('hospital_name', `%${hospitalNome}%`).eq('is_active', true).limit(1),
+          10000, 'Consulta ao PausaMed (regra do hospital)',
+        )
         if (error) return { ...VAZIA, erro: 'Não consegui consultar o PausaMed: ' + error.message }
         const r = data?.[0]
         if (r) return linha({ ...r, medication_name: base.medication_name, active_ingredient: base.active_ingredient }, 'hospital', hospitalNome)
@@ -257,9 +288,11 @@ export async function resolverMedicamento(opts: {
 
       // 2) Personalização da clínica para aquele hospital
       if (clinicId && hospitalNome) {
-        const { data, error } = await sb.from('clinic_protocol_variants')
-          .select('*').eq('base_rule_id', base.id)
-          .eq('clinic_id', clinicId).eq('status', 'active').limit(1)
+        const { data, error } = await comTimeout(
+          sb.from('clinic_protocol_variants').select('*').eq('base_rule_id', base.id)
+            .eq('clinic_id', clinicId).eq('status', 'active').limit(1),
+          10000, 'Consulta ao PausaMed (personalização da clínica)',
+        )
         if (error) return { ...VAZIA, erro: 'Não consegui consultar o PausaMed: ' + error.message }
         const r = data?.[0]
         if (r) return linha({ ...r, medication_name: base.medication_name, active_ingredient: base.active_ingredient }, 'clinica', 'Personalização da clínica')
@@ -267,15 +300,19 @@ export async function resolverMedicamento(opts: {
 
       // 3) Regra hospitalar importada / personalização antiga da clínica
       if (clinicId) {
-        const { data, error } = await sb.from('clinic_clinical_rule_overrides')
-          .select('*').eq('base_rule_id', base.id)
-          .eq('clinic_id', clinicId).limit(1)
+        const { data, error } = await comTimeout(
+          sb.from('clinic_clinical_rule_overrides').select('*').eq('base_rule_id', base.id)
+            .eq('clinic_id', clinicId).limit(1),
+          10000, 'Consulta ao PausaMed (personalização antiga)',
+        )
         if (error) return { ...VAZIA, erro: 'Não consegui consultar o PausaMed: ' + error.message }
         const r = data?.[0]
         if (r) return linha({ ...r, medication_name: base.medication_name, active_ingredient: base.active_ingredient }, 'hospital_importada', 'Personalização antiga da clínica')
       }
     }
   } catch (e: any) {
+    // v48.173 — inclui o erro de comTimeout (PausaMed lento/fora do ar),
+    // antes isto só cobria erro de rede/exceção do próprio cliente Supabase.
     return { ...VAZIA, erro: 'Não consegui consultar o PausaMed: ' + (e?.message || e) }
   }
 
@@ -349,10 +386,17 @@ async function buscarNaBaseClinica(admin: ReturnType<typeof getSupabaseAdmin>, t
       : 'Base própria da clínica (pesquisada por IA antes)',
     principioAtivo: r.principio_ativo || null, nomesComerciais: r.nomes_comerciais || null,
     prazoSuspensaoDias: r.prazo_suspensao_dias != null ? Number(r.prazo_suspensao_dias) : null,
+    // v48.173 — r.prazo_texto é o texto cru do prazo (ex.: "21 dias",
+    // "reduzir dose 3 dias antes") — coluna original desta tabela (v48.101).
+    // Até aqui nunca tinha sido repassado para a tela (só o número ia); ver
+    // comentário do v48.144 logo abaixo sobre fonteReferencia, que é campo
+    // diferente.
+    prazoTexto: r.prazo_texto || null,
     explicacaoPaciente: r.explicacao_paciente || null, clinicalNotes: r.orientacao || null,
-    // v48.144 — Antes lia r.prazo_texto aqui (o texto cru do prazo, tipo "21
-    // dias" — não uma referência de verdade). A coluna certa é `referencia`
-    // (nova, ver migração v48.144).
+    // v48.144 — Antes lia r.prazo_texto aqui para fonteReferencia (o texto
+    // cru do prazo, tipo "21 dias" — não uma referência de verdade). A
+    // coluna certa para a referência é `referencia` (nova, ver migração
+    // v48.144); prazo_texto agora tem seu próprio campo acima (v48.173).
     fonteReferencia: r.referencia || null,
     // v48.172 — esta linha veio de uma pesquisa de IA já auditada antes (ver
     // migração 20261007_auditoria_medicamentos_ia_v48_172.sql) — repassa a
@@ -448,11 +492,13 @@ async function pesquisarComIA(nomeInformado: string, hospitalNome: string | null
         encontrado: true, fonte: 'ia', fonteDetalhe: 'Pesquisado agora por IA — confira com atenção antes de aprovar',
         principioAtivo: j.principio_ativo || null, nomesComerciais: j.nomes_comerciais || null,
         prazoSuspensaoDias: j.prazo_suspensao_dias != null ? Number(j.prazo_suspensao_dias) : null,
+        // v48.173 — o prazo por extenso que a IA escreveu (prazoTexto no
+        // workflow) — pode trazer variantes ("10 a 14 dias, dependendo da
+        // dose") que o número sozinho não mostra. Pedido do Jorge.
+        prazoTexto: j.prazo_texto || null,
         explicacaoPaciente: j.explicacao_paciente || null, clinicalNotes: j.orientacao || null,
-        // v48.144 — Antes lia j.prazo_texto aqui (mesmo desencontro do
-        // comentário acima). Agora vem do campo `referencia` que o workflow
-        // "CRM - Pesquisar Remédio (IA)" devolve — descrição por extenso das
-        // fontes usadas.
+        // v48.144 — `referencia` descreve por extenso as FONTES usadas (não o
+        // prazo — esse é prazo_texto, acima).
         fonteReferencia: j.referencia || null,
         // v48.172 — "auditoria" (nome dado pelo Jorge): motivo em linguagem
         // simples + as fontes reais que a IA abriu numa busca ao vivo agora.
@@ -559,6 +605,11 @@ function linha(r: any, fonte: RegraMedicamento['fonte'], fonteDetalhe: string): 
     principioAtivo: r.active_ingredient || null,
     nomesComerciais: r.medication_name || null,
     prazoSuspensaoDias: prazoEmDias(r.interruption_period),
+    // v48.173 — r.interruption_period já é o texto cru do PausaMed ("21
+    // dias", "Suspender 15 dias antes"...) — antes só virava número
+    // (prazoEmDias acima); agora também repassamos o texto original, que
+    // pode trazer nuance que o número perde.
+    prazoTexto: r.interruption_period != null ? String(r.interruption_period).trim() || null : null,
     explicacaoPaciente: r.patient_explanation || null,
     clinicalNotes: r.clinical_notes || null,
     fonteReferencia: r.source_reference || null,

@@ -82,6 +82,10 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     principio_ativo: regra.principioAtivo,
     nomes_comerciais: regra.nomesComerciais,
     prazo_suspensao_dias: regra.prazoSuspensaoDias,
+    // v48.173 — prazo por extenso (pode trazer variantes que o número
+    // sozinho não mostra) — pedido do Jorge depois de ver a Auditoria sem
+    // o prazo.
+    prazo_texto: regra.prazoTexto,
     explicacao_paciente: regra.explicacaoPaciente,
     clinical_notes: regra.clinicalNotes,
     fonte: regra.fonte,

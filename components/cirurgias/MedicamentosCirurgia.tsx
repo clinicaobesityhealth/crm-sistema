@@ -37,6 +37,9 @@ type FonteConsultada = { titulo: string; url: string }
 type Medicamento = {
   id: string; nome_informado: string; principio_ativo: string | null
   prazo_suspensao_dias: number | null; explicacao_paciente: string | null
+  // v48.173 — prazo por extenso (ex.: "10 a 14 dias, dependendo da dose") —
+  // pode trazer variantes que prazo_suspensao_dias (só o número) não mostra.
+  prazo_texto?: string | null
   fonte: string | null; fonte_detalhe: string | null; fonte_referencia: string | null; status: string
   // v48.172 — "Auditoria" (nome dado pelo Jorge): preenchido quando a
   // pesquisa foi (ou reaproveitou) uma busca ao vivo por IA. Ver migração
@@ -81,7 +84,8 @@ function SeloConfiabilidade({ nivel }: { nivel?: 'alta' | 'media' | 'baixa' | nu
 // salvo, ao expandir a linha (para conferir de novo antes de aprovar).
 function PainelAuditoria({ m }: { m: Medicamento }) {
   const fontes = Array.isArray(m.fontes_consultadas) ? m.fontes_consultadas.filter(f => f && (f.url || f.titulo)) : []
-  const temAlgo = !!(m.motivo_suspensao || m.correcao_automatica || fontes.length || m.confiabilidade || m.fonte_referencia)
+  const temPrazo = !!m.prazo_texto || m.prazo_suspensao_dias != null
+  const temAlgo = !!(temPrazo || m.motivo_suspensao || m.correcao_automatica || fontes.length || m.confiabilidade || m.fonte_referencia)
   if (!temAlgo) return null
   return (
     <div className="rounded-lg border border-violet-200 bg-violet-50 px-2.5 py-2 space-y-1.5">
@@ -92,6 +96,17 @@ function PainelAuditoria({ m }: { m: Medicamento }) {
           <span className="text-[10px] text-violet-500 font-normal normal-case">(sem busca ao vivo confirmada — confira com atenção redobrada)</span>
         )}
       </p>
+      {/* v48.173 — Prazo de suspensão em destaque, logo no topo — pedido do
+          Jorge: "a auditoria não está trazendo o prazo de suspensão ou
+          prazos encontrados (variantes quando houver)". Prefere o texto por
+          extenso (prazo_texto), que pode trazer variantes que o número
+          sozinho não mostra; cai no número quando só ele existir. */}
+      {temPrazo && (
+        <p className="text-[12px] text-violet-900 font-bold flex items-center gap-1.5">
+          <Clock size={13} className="shrink-0"/>
+          Prazo de suspensão: {m.prazo_texto || (m.prazo_suspensao_dias === 0 ? 'Não suspender' : `${m.prazo_suspensao_dias} dias antes da cirurgia`)}
+        </p>
+      )}
       {m.correcao_automatica && (
         <p className="text-[11px] text-violet-700 flex items-start gap-1.5">
           <SpellCheck size={13} className="shrink-0 mt-0.5"/>
