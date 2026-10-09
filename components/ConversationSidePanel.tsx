@@ -121,7 +121,10 @@ function limparHtmlParaMedx(htmlBruto: string): string {
   return `<p>${normalizado}</p>`
 }
 
-type Tab = 'data' | 'attachments' | 'scheduled' | 'medx' | 'recibos' | 'prontuario'
+// v48.174 — "Prontuário" deixou de ser aba própria (ficava espremida ao lado
+// de "Anexos" na fileira de abas) e virou um submenu dentro de "MedX" — ver
+// MedXTab mais abaixo.
+type Tab = 'data' | 'attachments' | 'scheduled' | 'medx' | 'recibos'
 
 type Props = {
   contact: Contact
@@ -494,7 +497,6 @@ export default function ConversationSidePanel({ contact, messages, sectors = [],
         <div className="flex border-b border-slate-100 flex-shrink-0">
           <TabButton active={tab === 'data'} onClick={() => setTab('data')} label="Dados"/>
           <TabButton active={tab === 'medx'} onClick={() => setTab('medx')} label="MedX"/>
-          <TabButton active={tab === 'prontuario'} onClick={() => setTab('prontuario')} label="Prontuário"/>
           <TabButton active={tab === 'attachments'} onClick={() => setTab('attachments')} label="Anexos" badge={attachments.length}/>
           <TabButton active={tab === 'scheduled'} onClick={() => setTab('scheduled')} label="Agendadas"/>
           <TabButton active={tab === 'recibos'} onClick={() => setTab('recibos')} label="Recibos"/>
@@ -909,10 +911,6 @@ export default function ConversationSidePanel({ contact, messages, sectors = [],
           )}
 
           {tab === 'medx' && <MedXTab key={contact.id} contact={contact} onSaved={onSaved} openSchedule={openSchedule} openRetorno={openRetorno}/>}
-
-          {tab === 'prontuario' && (
-            <ProntuarioPanel key={contact.id} nome={contact.full_name} telefone={contact.phone} medxIdConhecido={contact.medx_id}/>
-          )}
 
           {tab === 'scheduled' && <ScheduledTab contact={contact}/>}
 
@@ -1776,6 +1774,10 @@ function MedXTab({ contact, onSaved, openSchedule = false, openRetorno = false }
   const [data, setData] = useState<MedXData | null>(null)
   const [error, setError] = useState('')
   const [searched, setSearched] = useState(false)
+  // v48.174 — Prontuário era uma aba própria, espremida ao lado de "Anexos"
+  // na fileira de cima (pedido do Jorge: muito perto, difícil de ler). Virou
+  // submenu aqui dentro de MedX — mesmo padrão de Recebidas/Enviadas em Anexos.
+  const [medxSubAba, setMedxSubAba] = useState<'agenda' | 'prontuario'>('agenda')
 
   // Correção manual de cobrança (a Sofia/MedX às vezes classifica errado — ex: marca
   // "cobrar" numa consulta que na verdade é o retorno de uma cirurgia recém-feita).
@@ -2749,7 +2751,29 @@ function MedXTab({ contact, onSaved, openSchedule = false, openRetorno = false }
   }
 
   return (
-    <div className="px-5 py-5">
+    <div>
+      {/* v48.174 — Submenu Agenda/Prontuário, mesmo padrão de Recebidas/Enviadas
+          em Anexos — Prontuário deixou de brigar por espaço na fileira de abas
+          de cima. ProntuarioPanel já tem seu próprio px-5 py-5 (reaproveitado
+          também fora daqui, na Agenda Médica), por isso este container não tem
+          padding próprio — só o submenu, que precisa do respiro nas laterais. */}
+      <div className="flex gap-1 bg-slate-100 rounded-lg p-1 mx-5 mt-5 mb-4">
+        <button onClick={() => setMedxSubAba('agenda')}
+          className={clsx('flex-1 px-3 py-1.5 text-xs font-semibold rounded-md transition-colors',
+            medxSubAba === 'agenda' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700')}>
+          Cadastro e agenda
+        </button>
+        <button onClick={() => setMedxSubAba('prontuario')}
+          className={clsx('flex-1 px-3 py-1.5 text-xs font-semibold rounded-md transition-colors',
+            medxSubAba === 'prontuario' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700')}>
+          Prontuário
+        </button>
+      </div>
+
+      {medxSubAba === 'prontuario' ? (
+        <ProntuarioPanel key={contact.id} nome={contact.full_name} telefone={contact.phone} medxIdConhecido={contact.medx_id}/>
+      ) : (
+      <div className="px-5 pb-5">
       {!searched && !loading && (
         <div className="flex flex-col items-center justify-center py-10 text-center">
           <div className="w-12 h-12 bg-brand-50 rounded-xl flex items-center justify-center mb-3">
@@ -3279,6 +3303,8 @@ function MedXTab({ contact, onSaved, openSchedule = false, openRetorno = false }
             </>
           )}
         </div>
+      )}
+    </div>
       )}
     </div>
   )
