@@ -368,6 +368,17 @@ export default function AgendaPage() {
                         title="Tentar reenviar do jeito que está">
                         <RotateCcw size={14}/>
                       </button>
+                      {/* v48.176 — Pedido do Jorge: uma mensagem que falhou e ele não
+                          quer mais reenviar (ex.: não faz mais sentido, ou o número
+                          está mesmo errado e não vai corrigir agora) ficava presa na
+                          lista pra sempre, sem jeito de tirar de lá. Mesma ação de
+                          "Excluir" que já existe pra agendadas (handleCancel) — some
+                          da aba "Falhou" e não tenta de novo. */}
+                      <button onClick={() => handleCancel(it.msg.id)}
+                        className="p-1.5 hover:bg-red-50 rounded-lg text-slate-300 hover:text-red-500 transition-colors"
+                        title="Excluir (não tentar de novo)">
+                        <X size={14}/>
+                      </button>
                     </div>
                   )}
                 </div>
