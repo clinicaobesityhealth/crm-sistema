@@ -26,6 +26,7 @@ import clsx from 'clsx'
 import { registerPatientInMedx, validateMedxRegistration } from '@/lib/medxRegistration'
 import { buscarAgendamentosMedx } from '@/lib/medxAgendamentos'
 import ProntuarioPanel from '@/components/ProntuarioPanel'
+import { useAcessoProntuario } from '@/lib/acessoProntuario'
 
 // Webhook que sincroniza os dados do cadastro de volta pro MedX (silencioso,
 // disparado apos salvar quando o contato ja tem medx_id).
@@ -1778,6 +1779,9 @@ function MedXTab({ contact, onSaved, openSchedule = false, openRetorno = false }
   // na fileira de cima (pedido do Jorge: muito perto, difícil de ler). Virou
   // submenu aqui dentro de MedX — mesmo padrão de Recebidas/Enviadas em Anexos.
   const [medxSubAba, setMedxSubAba] = useState<'agenda' | 'prontuario'>('agenda')
+  // v48.175 — Prontuário é restrito a médicos (dado clínico sensível). Se o
+  // cargo não tem acesso, nem mostra o submenu — só "Cadastro e agenda".
+  const podeVerProntuario = useAcessoProntuario()
 
   // Correção manual de cobrança (a Sofia/MedX às vezes classifica errado — ex: marca
   // "cobrar" numa consulta que na verdade é o retorno de uma cirurgia recém-feita).
@@ -2757,20 +2761,26 @@ function MedXTab({ contact, onSaved, openSchedule = false, openRetorno = false }
           de cima. ProntuarioPanel já tem seu próprio px-5 py-5 (reaproveitado
           também fora daqui, na Agenda Médica), por isso este container não tem
           padding próprio — só o submenu, que precisa do respiro nas laterais. */}
-      <div className="flex gap-1 bg-slate-100 rounded-lg p-1 mx-5 mt-5 mb-4">
-        <button onClick={() => setMedxSubAba('agenda')}
-          className={clsx('flex-1 px-3 py-1.5 text-xs font-semibold rounded-md transition-colors',
-            medxSubAba === 'agenda' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700')}>
-          Cadastro e agenda
-        </button>
-        <button onClick={() => setMedxSubAba('prontuario')}
-          className={clsx('flex-1 px-3 py-1.5 text-xs font-semibold rounded-md transition-colors',
-            medxSubAba === 'prontuario' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700')}>
-          Prontuário
-        </button>
-      </div>
+      {podeVerProntuario && (
+        <div className="flex gap-1 bg-slate-100 rounded-lg p-1 mx-5 mt-5 mb-4">
+          <button onClick={() => setMedxSubAba('agenda')}
+            className={clsx('flex-1 px-3 py-1.5 text-xs font-semibold rounded-md transition-colors',
+              medxSubAba === 'agenda' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700')}>
+            Cadastro e agenda
+          </button>
+          <button onClick={() => setMedxSubAba('prontuario')}
+            className={clsx('flex-1 px-3 py-1.5 text-xs font-semibold rounded-md transition-colors',
+              medxSubAba === 'prontuario' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700')}>
+            Prontuário
+          </button>
+        </div>
+      )}
 
-      {medxSubAba === 'prontuario' ? (
+      {/* v48.175 — Sem acesso (ou "Cadastro e agenda" selecionado): mostra o
+          cadastro/agenda normalmente. Isso soma com o gate de verdade, que é
+          dentro do ProntuarioPanel — aqui é só pra não oferecer um botão que
+          vai levar a "Acesso restrito". */}
+      {medxSubAba === 'prontuario' && podeVerProntuario ? (
         <ProntuarioPanel key={contact.id} nome={contact.full_name} telefone={contact.phone} medxIdConhecido={contact.medx_id}/>
       ) : (
       <div className="px-5 pb-5">

@@ -1,7 +1,8 @@
 'use client'
-import { useEffect, useState } from 'react'
-import { Loader2, AlertCircle, Sparkles, ExternalLink, AlertTriangle, Pill, Stethoscope, FlaskConical, ClipboardList, History } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
+import { Loader2, AlertCircle, Sparkles, ExternalLink, AlertTriangle, Pill, Stethoscope, FlaskConical, ClipboardList, History, Lock } from 'lucide-react'
 import { buscarAgendamentosMedxCached } from '@/lib/medxAgendamentos'
+import { useAcessoProntuario } from '@/lib/acessoProntuario'
 
 // v48.163 — Prontuário completo do paciente, puxado ao vivo do MedX, com um resumo
 // clínico gerado por IA (datas, exames em ordem, alergias, medicamentos, conduta da
@@ -52,18 +53,35 @@ function limparHtml(s?: string) {
     .trim()
 }
 
-function fmtDataHora(s?: string) {
-  if (!s) return ''
+// v48.175 — Cabeçalho de dia (pedido do Jorge: a data repetida em cinza
+// clarinho antes de cada anotação dificultava achar onde um dia terminava e
+// o outro começava). Agora o histórico é agrupado por dia, com essa data em
+// destaque uma vez só por grupo.
+function fmtDiaCabecalho(s?: string) {
+  if (!s) return 'Sem data'
   try {
     const d = new Date(s)
     if (Number.isNaN(d.getTime())) return s
-    return d.toLocaleDateString('pt-BR') + ' ' + d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+    const txt = d.toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' })
+    return txt.charAt(0).toUpperCase() + txt.slice(1)
   } catch { return s }
+}
+
+function fmtHora(s?: string) {
+  if (!s) return ''
+  try {
+    const d = new Date(s)
+    if (Number.isNaN(d.getTime())) return ''
+    return d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+  } catch { return '' }
 }
 
 export default function ProntuarioPanel({ nome, telefone, medxIdConhecido }: {
   nome: string; telefone?: string | null; medxIdConhecido?: string | null
 }) {
+  // v48.175 — Dado clínico sensível: só médico vê (pedido do Jorge). `null`
+  // enquanto checa o cargo — não busca nada no MedX nem mostra nada até saber.
+  const podeVer = useAcessoProntuario()
   const [pacId, setPacId] = useState<string | null>(medxIdConhecido || null)
   const [resolvendoPacId, setResolvendoPacId] = useState(!medxIdConhecido)
   const [loading, setLoading] = useState(true)
@@ -76,11 +94,12 @@ export default function ProntuarioPanel({ nome, telefone, medxIdConhecido }: {
   const [verTudo, setVerTudo] = useState(false)
 
   useEffect(() => {
+    if (podeVer !== true) return
     setPacId(medxIdConhecido || null)
     setResumoIA(null); setErroResumo('')
     buscarTudo()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [nome, telefone, medxIdConhecido])
+  }, [nome, telefone, medxIdConhecido, podeVer])
 
   async function buscarTudo() {
     setLoading(true); setError(''); setHistorico([]); setResumoClinico(null)
@@ -138,7 +157,42 @@ export default function ProntuarioPanel({ nome, telefone, medxIdConhecido }: {
     .filter(h => h && (h.Historico || h.TipoDoc))
     .sort((a, b) => new Date(b.Data || 0).getTime() - new Date(a.Data || 0).getTime())
 
+  // v48.175 — Agrupa por dia (já vem ordenado do mais recente pro mais
+  // antigo) pra poder mostrar a data uma vez só por grupo, em destaque.
+  const gruposPorDia = useMemo(() => {
+    const grupos: { chave: string; itens: HistoricoItem[] }[] = []
+    for (const h of itensOrdenados) {
+      const chave = (h.Data || '').slice(0, 10) || '—'
+      const ultimo = grupos[grupos.length - 1]
+      if (ultimo && ultimo.chave === chave) ultimo.itens.push(h)
+      else grupos.push({ chave, itens: [h] })
+    }
+    return grupos
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [historico])
+
   const alergias = resumoIA?.alergias || resumoClinico?.alergias || ''
+
+  // v48.175 — Prontuário é restrito a médicos. Enquanto não sabe o cargo,
+  // não busca nada nem mostra nada (evita um piscar de conteúdo clínico).
+  if (podeVer === null) {
+    return (
+      <div className="px-5 py-5 flex items-center justify-center h-32 text-slate-400 text-sm">
+        <Loader2 size={16} className="animate-spin mr-2"/> Verificando acesso...
+      </div>
+    )
+  }
+  if (podeVer === false) {
+    return (
+      <div className="px-5 py-5">
+        <div className="flex flex-col items-center justify-center text-center py-10 px-4 bg-slate-50 border border-slate-200 rounded-xl">
+          <Lock size={22} className="text-slate-300 mb-2"/>
+          <p className="text-sm font-semibold text-slate-600">Acesso restrito</p>
+          <p className="text-xs text-slate-400 mt-1 max-w-xs">O Prontuário mostra o histórico clínico do paciente e está disponível só para médicos.</p>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="px-5 py-5 space-y-4">
@@ -252,16 +306,30 @@ export default function ProntuarioPanel({ nome, telefone, medxIdConhecido }: {
               <History size={13}/> {verTudo ? 'Ocultar' : 'Ver'} histórico completo de evolução ({itensOrdenados.length})
             </button>
             {verTudo && (
-              <div className="space-y-3 max-h-[50vh] overflow-y-auto pr-1">
+              <div className="max-h-[50vh] overflow-y-auto pr-1">
                 {itensOrdenados.length === 0 && (
                   <p className="text-xs text-slate-400">Nenhuma anotação encontrada no MedX.</p>
                 )}
-                {itensOrdenados.map((h, i) => (
-                  <div key={h.Id_do_Historico ?? i} className="border-b border-slate-100 pb-2.5 last:border-0">
-                    <p className="text-[11px] text-slate-400">{fmtDataHora(h.Data)} · {h.Usuario || '—'}</p>
-                    <p className="text-sm text-slate-700 whitespace-pre-wrap mt-0.5">
-                      {limparHtml(h.Historico) || (h.TipoDoc ? `[Anexo: ${h.TipoDoc}]` : '')}
+                {/* v48.175 — Agrupado por dia, com a data em destaque uma vez só
+                    por grupo (fixa no topo enquanto rola) em vez de repetida,
+                    pequena e cinza-clara em cada anotação — pedido do Jorge,
+                    estava difícil achar onde um dia terminava e o outro
+                    começava. */}
+                {gruposPorDia.map(grupo => (
+                  <div key={grupo.chave} className="mb-4 last:mb-0">
+                    <p className="sticky top-0 z-10 -mx-0.5 px-2 py-1.5 mb-2 bg-slate-100 border border-slate-200 rounded-md text-[11px] font-bold text-slate-600">
+                      {fmtDiaCabecalho(grupo.itens[0].Data)}
                     </p>
+                    <div className="space-y-2">
+                      {grupo.itens.map((h, i) => (
+                        <div key={h.Id_do_Historico ?? i} className="bg-white border border-slate-200 rounded-lg px-3 py-2.5">
+                          <p className="text-[11px] font-semibold text-slate-500 mb-1">{fmtHora(h.Data)} · {h.Usuario || '—'}</p>
+                          <p className="text-sm text-slate-800 whitespace-pre-wrap">
+                            {limparHtml(h.Historico) || (h.TipoDoc ? `[Anexo: ${h.TipoDoc}]` : '')}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 ))}
               </div>

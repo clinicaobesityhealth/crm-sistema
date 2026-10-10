@@ -148,6 +148,11 @@ export type JobTitle = {
   clinic_id: string
   name: string
   created_at: string
+  ve_cirurgias?: boolean
+  ve_agenda_pessoal?: boolean
+  // v48.175 — vê o Prontuário (histórico clínico do MedX). Por padrão só
+  // cargos de médico — pedido do Jorge, dado sensível.
+  ve_prontuario?: boolean
 }
 
 export type ProfessionalScheduleBlock = {

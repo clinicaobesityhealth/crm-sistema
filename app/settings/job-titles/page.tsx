@@ -2,7 +2,7 @@
 import { useState, useEffect } from 'react'
 import { supabase, JobTitle } from '@/lib/supabase'
 import Sidebar from '@/components/Sidebar'
-import { Plus, Pencil, Trash2, X, Save, Loader2, Contact, AlertCircle, Scissors, AlarmClock } from 'lucide-react'
+import { Plus, Pencil, Trash2, X, Save, Loader2, Contact, AlertCircle, Scissors, AlarmClock, Stethoscope } from 'lucide-react'
 
 export default function JobTitlesPage() {
   const [jobTitles, setJobTitles] = useState<JobTitle[]>([])
@@ -37,6 +37,16 @@ export default function JobTitlesPage() {
     loadJobTitles()
   }
 
+  // v48.175 — Prontuário é dado clínico sensível: por padrão só cargos de
+  // médico enxergam (a migração já liga sozinha para cargos com "médic(o)"
+  // no nome). Aqui dá pra ajustar cargo a cargo, igual aos outros dois.
+  async function alternarProntuario(jobTitle: any) {
+    const { error } = await supabase.from('job_titles')
+      .update({ ve_prontuario: !jobTitle.ve_prontuario }).eq('id', jobTitle.id)
+    if (error) { alert('Não foi possível salvar: ' + error.message); return }
+    loadJobTitles()
+  }
+
   function openCreate() {
     setEditing(null)
     setShowModal(true)
@@ -60,7 +70,7 @@ export default function JobTitlesPage() {
         <div className="bg-white border-b border-slate-100 px-6 py-4 flex items-center justify-between">
           <div>
             <h1 className="text-lg font-semibold text-slate-800">Cargos</h1>
-            <p className="text-xs text-slate-400 mt-0.5">Lista de cargos disponíveis ao cadastrar um atendente. A marca ao lado de cada um diz se aquele cargo enxerga a agenda cirúrgica — administradores enxergam sempre.</p>
+            <p className="text-xs text-slate-400 mt-0.5">Lista de cargos disponíveis ao cadastrar um atendente. As marcas ao lado de cada um dizem se aquele cargo enxerga a agenda cirúrgica, tem agenda pessoal e vê o Prontuário — administradores enxergam tudo sempre.</p>
           </div>
           <button
             onClick={openCreate}
@@ -110,6 +120,18 @@ export default function JobTitlesPage() {
                         : 'bg-slate-100 text-slate-400 hover:bg-slate-200')}>
                     <AlarmClock size={12}/>
                     <span className="hidden sm:inline">{(jobTitle as any).ve_agenda_pessoal ? 'tem agenda' : 'sem agenda'}</span>
+                  </button>
+                  <button
+                    onClick={() => alternarProntuario(jobTitle)}
+                    title={(jobTitle as any).ve_prontuario
+                      ? 'Este cargo vê o Prontuário (histórico clínico) — clique para tirar'
+                      : 'Este cargo não vê o Prontuário — clique para liberar'}
+                    className={'flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold flex-shrink-0 transition-colors '
+                      + ((jobTitle as any).ve_prontuario
+                        ? 'bg-violet-50 text-violet-700 hover:bg-violet-100'
+                        : 'bg-slate-100 text-slate-400 hover:bg-slate-200')}>
+                    <Stethoscope size={12}/>
+                    <span className="hidden sm:inline">{(jobTitle as any).ve_prontuario ? 'vê prontuário' : 'sem prontuário'}</span>
                   </button>
                   <div className="flex items-center gap-1 flex-shrink-0">
                     <button onClick={() => openEdit(jobTitle)} className="p-2 hover:bg-slate-100 rounded-lg text-slate-400 hover:text-brand-600 transition-colors">
