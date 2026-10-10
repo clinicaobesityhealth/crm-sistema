@@ -2377,6 +2377,14 @@ function MedXTab({ contact, onSaved, openSchedule = false, openRetorno = false }
 
     if (pac?.resultado === 'encontrado') {
       if (pac.Id_do_Cliente) {
+        const idEncontrado = String(pac.Id_do_Cliente)
+        // v48.178 — Nunca troca sozinho um vínculo com o MedX que já existia por outro
+        // encontrado numa busca por nome/telefone: um nome parecido pode levar a trocar
+        // a pessoa errada (casos reais: "Marcia Valeria" -> "Marcia Cristina"; "Bruna
+        // Puggina" -> "Bruna Polidoro"). Se o vínculo correto realmente mudou, isso
+        // precisa ser confirmado manualmente, não sobrescrito sem ninguém notar.
+        const linkJaExistiaDiferente = !!(contact as any).medx_id && (contact as any).medx_id !== idEncontrado
+        if (!linkJaExistiaDiferente) {
         try {
           // Preenche no cadastro do CRM o que ainda não tinha, sem sobrescrever o que já existia —
           // assim os dados que o MedX já conhece ficam salvos e não precisam ser perguntados de novo.
@@ -2396,9 +2404,15 @@ function MedXTab({ contact, onSaved, openSchedule = false, openRetorno = false }
           // O nome do MedX sempre prevalece sobre o que estiver cadastrado no CRM, pra evitar
           // confusão entre paciente/cadastro (ex: "Fulana" no CRM vs "Fulana da Silva" no MedX).
           // Só ignora se o MedX mandar algo vazio/quebrado (com "?" no lugar de acento).
-          const nomeMedx = (pac.nome && !pac.nome.includes('?')) ? String(pac.nome).trim() : null
+          // v48.178 — e também ignora quando o nome do contato no CRM tem só um nome (sem
+          // sobrenome, comum = nome de exibição do WhatsApp): nesse caso um "achado" por
+          // primeiro nome não é confiável o bastante pra sobrescrever o cadastro - só o
+          // medx_id/CPF/dados complementares são gravados, o nome fica como está até
+          // alguém confirmar com o paciente.
+          const nomeCrmTemSoPrimeiroNome = contact.full_name.trim().split(/\s+/).filter(t => t.length > 2).length <= 1
+          const nomeMedx = (pac.nome && !pac.nome.includes('?') && !nomeCrmTemSoPrimeiroNome) ? String(pac.nome).trim() : null
           const { data: updated } = await supabase.from('contacts').update({
-            medx_id: String(pac.Id_do_Cliente),
+            medx_id: idEncontrado,
             ...(nomeMedx && nomeMedx !== contact.full_name ? { full_name: nomeMedx } : {}),
             cpf: pac.cpf || (contact as any).cpf || null,
             email: contact.email || pac.email || null,
@@ -2406,6 +2420,7 @@ function MedXTab({ contact, onSaved, openSchedule = false, openRetorno = false }
           }).eq('id', contact.id).select().single()
           if (updated) onSaved(updated as Contact)
         } catch {}
+        }
       }
       setData({
         encontrado: true,

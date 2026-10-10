@@ -4,6 +4,18 @@ import { NextRequest, NextResponse } from 'next/server'
 const WH_PACIENTE = 'https://n8n-n8n.5k3mqv.easypanel.host/webhook/tool-buscar-paciente'
 const WH_AGENDA = 'https://n8n-n8n.5k3mqv.easypanel.host/webhook/buscar_agendamento'
 
+// v48.178 — Segunda checagem (além da que o fluxo n8n já faz) antes de aceitar
+// um paciente como "encontrado": casos reais em que o CRM trocou o cadastro
+// certo por outro de nome parecido ("Marcia Valeria" -> "Marcia Cristina";
+// "Bruna Puggina" -> "Bruna Polidoro"). Isso acontece quando o nome salvo no
+// CRM é só o primeiro nome (comum — é o nome de exibição do WhatsApp) e há
+// mais de uma pessoa com esse primeiro nome no MedX: nesse caso um primeiro
+// nome igual não confirma nada. Quando o telefone do cadastro encontrado não
+// é o mesmo telefone do contato que estamos buscando, não aceita o match.
+function semAcentos(s: string): string { return (s || '').normalize('NFD').replace(/[̀-ͯ]/g, '') }
+function normTexto(s: string): string { return semAcentos(s || '').toLowerCase().trim().replace(/\s+/g, ' ') }
+function normTelefoneDigitos(v: any): string { const d = String(v || '').replace(/\D/g, ''); return d.length > 11 ? d.slice(-11) : d }
+
 export async function POST(req: NextRequest) {
   try {
     const { nome, telefone, cpf } = await req.json()
@@ -39,6 +51,24 @@ export async function POST(req: NextRequest) {
       if (txt) { try { const j = JSON.parse(txt); paciente = Array.isArray(j) ? j[0] : j } catch {} }
     } else {
       debug.paciente_erro = String(pacRes.reason)
+    }
+
+    // v48.178 — ver comentário da função normTelefoneDigitos acima. Só entra em ação
+    // quando o nome informado tem só o primeiro nome E temos um telefone pra conferir;
+    // nome completo continua confiando na validação que já existe no fluxo do MedX.
+    if (paciente?.resultado === 'encontrado' && paciente.Id_do_Cliente) {
+      const tokensNome = normTexto(nome).split(' ').filter((t: string) => t.length > 2)
+      const telEntrada = normTelefoneDigitos(telefone)
+      if (tokensNome.length <= 1 && telEntrada) {
+        const telPaciente = normTelefoneDigitos(paciente.celular) || normTelefoneDigitos(paciente.telefone)
+        if (telPaciente && telPaciente !== telEntrada) {
+          debug.paciente_rejeitado_telefone_nao_confere = { nome, telefone, medx_id: paciente.Id_do_Cliente, medx_nome: paciente.nome }
+          paciente = {
+            resultado: 'nao_encontrado',
+            mensagem: 'Encontrado um cadastro no MedX com o mesmo primeiro nome, mas o telefone não confere com o contato — não vinculando automaticamente para evitar associar a pessoa errada. Confirme os dados (nome completo, CPF ou telefone) com o paciente.',
+          }
+        }
+      }
     }
     if (agRes.status === 'fulfilled') {
       const buf = await agRes.value.arrayBuffer()
