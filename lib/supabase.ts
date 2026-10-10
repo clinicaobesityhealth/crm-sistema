@@ -153,6 +153,12 @@ export type JobTitle = {
   // v48.175 — vê o Prontuário (histórico clínico do MedX). Por padrão só
   // cargos de médico — pedido do Jorge, dado sensível.
   ve_prontuario?: boolean
+  // v48.158 — recebe aviso de WhatsApp pessoal quando um paciente já em
+  // atendimento com ela manda mensagem estando offline (ou é transferido).
+  avisar_atendimento?: boolean
+  // v48.177 — recebe aviso de WhatsApp pessoal quando um paciente cai no
+  // Inbox (ainda sem atendente) e ninguém com esse cargo está online.
+  avisar_inbox?: boolean
 }
 
 export type ProfessionalScheduleBlock = {

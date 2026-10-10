@@ -2,7 +2,7 @@
 import { useState, useEffect } from 'react'
 import { supabase, JobTitle } from '@/lib/supabase'
 import Sidebar from '@/components/Sidebar'
-import { Plus, Pencil, Trash2, X, Save, Loader2, Contact, AlertCircle, Scissors, AlarmClock, Stethoscope } from 'lucide-react'
+import { Plus, Pencil, Trash2, X, Save, Loader2, Contact, AlertCircle, Scissors, AlarmClock, Stethoscope, Bell, Inbox } from 'lucide-react'
 
 export default function JobTitlesPage() {
   const [jobTitles, setJobTitles] = useState<JobTitle[]>([])
@@ -47,6 +47,24 @@ export default function JobTitlesPage() {
     loadJobTitles()
   }
 
+  // v48.158 — Aviso de WhatsApp pessoal quando um paciente já em atendimento
+  // com esse cargo manda mensagem com ela offline (ou é transferido pra ela).
+  async function alternarAvisarAtendimento(jobTitle: any) {
+    const { error } = await supabase.from('job_titles')
+      .update({ avisar_atendimento: !jobTitle.avisar_atendimento }).eq('id', jobTitle.id)
+    if (error) { alert('Não foi possível salvar: ' + error.message); return }
+    loadJobTitles()
+  }
+
+  // v48.177 — Aviso de WhatsApp pessoal quando um paciente cai no Inbox
+  // (ainda sem atendente) e ninguém desse cargo está com o CRM aberto.
+  async function alternarAvisarInbox(jobTitle: any) {
+    const { error } = await supabase.from('job_titles')
+      .update({ avisar_inbox: !jobTitle.avisar_inbox }).eq('id', jobTitle.id)
+    if (error) { alert('Não foi possível salvar: ' + error.message); return }
+    loadJobTitles()
+  }
+
   function openCreate() {
     setEditing(null)
     setShowModal(true)
@@ -70,7 +88,7 @@ export default function JobTitlesPage() {
         <div className="bg-white border-b border-slate-100 px-6 py-4 flex items-center justify-between">
           <div>
             <h1 className="text-lg font-semibold text-slate-800">Cargos</h1>
-            <p className="text-xs text-slate-400 mt-0.5">Lista de cargos disponíveis ao cadastrar um atendente. As marcas ao lado de cada um dizem se aquele cargo enxerga a agenda cirúrgica, tem agenda pessoal e vê o Prontuário — administradores enxergam tudo sempre.</p>
+            <p className="text-xs text-slate-400 mt-0.5">Lista de cargos disponíveis ao cadastrar um atendente. As marcas ao lado de cada um dizem se aquele cargo enxerga a agenda cirúrgica, tem agenda pessoal, vê o Prontuário e recebe avisos de WhatsApp pessoal (atendimento e Inbox) — administradores enxergam tudo sempre.</p>
           </div>
           <button
             onClick={openCreate}
@@ -132,6 +150,30 @@ export default function JobTitlesPage() {
                         : 'bg-slate-100 text-slate-400 hover:bg-slate-200')}>
                     <Stethoscope size={12}/>
                     <span className="hidden sm:inline">{(jobTitle as any).ve_prontuario ? 'vê prontuário' : 'sem prontuário'}</span>
+                  </button>
+                  <button
+                    onClick={() => alternarAvisarAtendimento(jobTitle)}
+                    title={(jobTitle as any).avisar_atendimento
+                      ? 'Recebe aviso de WhatsApp pessoal quando um paciente dela manda mensagem offline (ou é transferido) — clique para tirar'
+                      : 'Não recebe esse aviso — clique para ligar'}
+                    className={'flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold flex-shrink-0 transition-colors '
+                      + ((jobTitle as any).avisar_atendimento
+                        ? 'bg-amber-50 text-amber-700 hover:bg-amber-100'
+                        : 'bg-slate-100 text-slate-400 hover:bg-slate-200')}>
+                    <Bell size={12}/>
+                    <span className="hidden sm:inline">{(jobTitle as any).avisar_atendimento ? 'avisa atendimento' : 'sem aviso'}</span>
+                  </button>
+                  <button
+                    onClick={() => alternarAvisarInbox(jobTitle)}
+                    title={(jobTitle as any).avisar_inbox
+                      ? 'Recebe aviso de WhatsApp pessoal quando cai paciente no Inbox e ninguém desse cargo está online — clique para tirar'
+                      : 'Não recebe esse aviso — clique para ligar'}
+                    className={'flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold flex-shrink-0 transition-colors '
+                      + ((jobTitle as any).avisar_inbox
+                        ? 'bg-sky-50 text-sky-700 hover:bg-sky-100'
+                        : 'bg-slate-100 text-slate-400 hover:bg-slate-200')}>
+                    <Inbox size={12}/>
+                    <span className="hidden sm:inline">{(jobTitle as any).avisar_inbox ? 'avisa inbox' : 'sem aviso inbox'}</span>
                   </button>
                   <div className="flex items-center gap-1 flex-shrink-0">
                     <button onClick={() => openEdit(jobTitle)} className="p-2 hover:bg-slate-100 rounded-lg text-slate-400 hover:text-brand-600 transition-colors">
